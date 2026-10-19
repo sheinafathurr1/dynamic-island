@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using DynamicIsland.Animation;
@@ -58,7 +59,29 @@ public partial class IslandWindow : Window
         TimerDone,
         Notification,
         File,
+        Greeting,
     }
+
+    /// <summary>The mood light: two colours (top-left, bottom-right) and how strongly they shine (0 = off).</summary>
+    private readonly record struct Mood(Color A, Color B, double Strength)
+    {
+        public static readonly Mood Off = new(Colors.Black, Colors.Black, 0);
+    }
+
+    // Mood light colours: Apple's system palette, the same family as the island's other accents.
+    private static readonly Color MoodOrange = Color.FromRgb(0xFF, 0x9F, 0x0A);
+    private static readonly Color MoodRed = Color.FromRgb(0xFF, 0x45, 0x3A);
+    private static readonly Color MoodPink = Color.FromRgb(0xFF, 0x37, 0x5F);
+    private static readonly Color MoodPeach = Color.FromRgb(0xFF, 0x8A, 0x65);
+    private static readonly Color MoodYellow = Color.FromRgb(0xFF, 0xD6, 0x0A);
+    private static readonly Color MoodGreen = Color.FromRgb(0x30, 0xD1, 0x58);
+    private static readonly Color MoodMint = Color.FromRgb(0x63, 0xE6, 0xE2);
+    private static readonly Color MoodCyan = Color.FromRgb(0x64, 0xD2, 0xFF);
+    private static readonly Color MoodBlue = Color.FromRgb(0x0A, 0x84, 0xFF);
+    private static readonly Color MoodIndigo = Color.FromRgb(0x5E, 0x5C, 0xE6);
+    private static readonly Color MoodPurple = Color.FromRgb(0xBF, 0x5A, 0xF2);
+    private static readonly Color MoodSlate = Color.FromRgb(0x8E, 0x9B, 0xB5);
+    private static readonly Color MoodSteel = Color.FromRgb(0x5E, 0x6E, 0x8C);
 
     /// <summary>How long the compact "now playing" stays after pausing before the island goes idle.</summary>
     private static readonly TimeSpan PauseGrace = TimeSpan.FromSeconds(45);
@@ -74,6 +97,7 @@ public partial class IslandWindow : Window
     private static readonly TimeSpan LyricLead = TimeSpan.FromMilliseconds(150);
 
     private static readonly TimeSpan NotificationDuration = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan GreetingDuration = TimeSpan.FromSeconds(3.4);
     private static readonly TimeSpan FileDuration = TimeSpan.FromSeconds(6);
 
     /// <summary>One round switch on the controls page and the parts that show its state.</summary>
@@ -196,6 +220,14 @@ public partial class IslandWindow : Window
     private string? _filePath;
     private readonly Dictionary<string, QuickControl> _controls = [];
     private WeatherForecast? _shownForecast;
+
+    // Mood light, page dots, pointer light
+    private Mood _mood = Mood.Off;
+    private readonly SolidColorBrush _dotBrush = new(Colors.White);
+    private Color _notifyAccent = MoodBlue;
+    private Color _infoAccent = MoodBlue;
+    private bool _spotlightOn;
+    private string _clockText = "";
 
     // Notifications & agenda
     private AppNotification? _notification;
@@ -357,6 +389,15 @@ public partial class IslandWindow : Window
     {
         Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(350)));
         ApplyState();
+
+        // Say hello once the island has settled in.
+        var hello = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
+        hello.Tick += (_, _) =>
+        {
+            hello.Stop();
+            ShowGreeting();
+        };
+        hello.Start();
 
         // Each source is optional: if one is unavailable on this PC the rest keeps working.
         try
@@ -538,6 +579,8 @@ public partial class IslandWindow : Window
         SwitchTo(view, width, height);
         ScheduleLyricTick();
         ConfigureVisuals();
+        if (view != View.Expanded) HideSpotlight();
+        UpdateMood();
     }
 
     private (double Width, double Height, double Radius) SizeOf(View view)
@@ -572,6 +615,7 @@ public partial class IslandWindow : Window
         var shoulders = new DoubleAnimation(slim ? 0 : 1, TimeSpan.FromMilliseconds(slim ? 120 : 260));
         ShoulderLeft.BeginAnimation(OpacityProperty, shoulders);
         ShoulderRight.BeginAnimation(OpacityProperty, shoulders);
+        Sheen.BeginAnimation(OpacityProperty, shoulders); // the thin line is just a line, no glass edge
     }
 
     /// <summary>True while the pointer is in the gap between the screen edge and the (floating) island, right above it.</summary>
@@ -666,6 +710,7 @@ public partial class IslandWindow : Window
         if (allPages || _page == Page.Media) UpdateTimeline();
         if (allPages || _page == Page.Controls) UpdateControls();
         if (_page == Page.System) UpdateSystem();
+        UpdateMood(); // the sky moves with the hour, the timer turns red, the CPU heats up
     }
 
     /// <summary>
@@ -733,7 +778,7 @@ public partial class IslandWindow : Window
         if (_activity == ActivityKind.TimerDone && kind != ActivityKind.TimerDone) return;
 
         bool switching = _activity != kind;
-        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, NotifyPanel, FilePanel, InfoPanel })
+        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, NotifyPanel, FilePanel, GreetingPanel, InfoPanel })
             candidate.Visibility = ReferenceEquals(candidate, panel) ? Visibility.Visible : Visibility.Collapsed;
         if ((switching || kind is ActivityKind.Notification or ActivityKind.File) && _view == View.Activity) FadeIn(panel); // a new one pops in again
 
@@ -762,6 +807,7 @@ public partial class IslandWindow : Window
 
         InfoIconFill.Data = fillIcon is null ? null : (Geometry)FindResource(fillIcon);
         InfoIconFill.Fill = accent;
+        _infoAccent = accent is SolidColorBrush { Color: var color } && color != Colors.White ? color : MoodBlue;
         InfoIconStroke.Data = strokeIcon is null ? null : (Geometry)FindResource(strokeIcon);
         InfoIconStroke.Stroke = accent;
         InfoIcon.BeginAnimation(OpacityProperty, null);
@@ -908,6 +954,7 @@ public partial class IslandWindow : Window
             var dot = (Border)target.Child;
             bool active = (Page)target.Tag == _page;
             double width = active ? 16 : 6, opacity = active ? 0.95 : 0.35;
+            dot.Background = active ? _dotBrush : Brushes.White; // the current page's pill glows in the mood colour
             if (animate)
             {
                 var duration = TimeSpan.FromMilliseconds(260);
@@ -1655,6 +1702,7 @@ public partial class IslandWindow : Window
         CallMuteButton.Content = muted ? "Nyalakan" : "Bisukan";
         CallMuteButton.IsEnabled = _micMuted is not null;
         CallMuteButton.Background = muted ? (Brush)FindResource("WarningBrush") : (Brush)FindResource("TrackBrush");
+        UpdateMood(); // green turns red when muted
     }
 
     private void CallMute_Click(object sender, RoutedEventArgs e)
@@ -1725,7 +1773,7 @@ public partial class IslandWindow : Window
     {
         var now = DateTime.Now;
         var culture = CultureInfo.CurrentCulture;
-        ClockTime.Text = now.ToString("t", culture);
+        SetClock(now, culture);
         ClockDate.Text = now.ToString("dddd, d MMMM", culture);
         UpdateWeekStrip(now.Date);
         UpdateAgenda(now);
@@ -1744,6 +1792,32 @@ public partial class IslandWindow : Window
         bool worn = _volume?.DeviceWorn ?? false;
         ClockDeviceFill.Data = (Geometry)FindResource(worn ? "IconHeadphoneCups" : "IconSpeaker");
         ClockDeviceStroke.Data = (Geometry)FindResource(worn ? "IconHeadphoneBand" : "IconSpeakerWaves");
+    }
+
+    /// <summary>Big, light digits; "AM" / "PM" (where the region uses them) small beside them.</summary>
+    private void SetClock(DateTime now, CultureInfo culture)
+    {
+        string text = now.ToString("t", culture);
+        if (text == _clockText) return;
+        _clockText = text;
+
+        string designator = now.Hour < 12 ? culture.DateTimeFormat.AMDesignator : culture.DateTimeFormat.PMDesignator;
+        int at = designator.Length > 0 ? text.IndexOf(designator, StringComparison.Ordinal) : -1;
+        if (at < 0)
+        {
+            ClockTime.Text = text;
+            return;
+        }
+        string before = text[..at].Trim(), after = text[(at + designator.Length)..].Trim();
+        ClockTime.Inlines.Clear();
+        if (before.Length > 0) ClockTime.Inlines.Add(new System.Windows.Documents.Run(before));
+        ClockTime.Inlines.Add(new System.Windows.Documents.Run(before.Length > 0 ? " " + designator : designator + " ")
+        {
+            FontSize = 15,
+            FontWeight = FontWeights.Normal,
+            Foreground = (Brush)FindResource("SecondaryText"),
+        });
+        if (after.Length > 0) ClockTime.Inlines.Add(new System.Windows.Documents.Run(after));
     }
 
     /// <summary>This week as seven columns (localised, starting on the culture's first weekday), today circled.</summary>
@@ -1813,6 +1887,7 @@ public partial class IslandWindow : Window
     {
         if (_view == View.Expanded) UpdateToday();
         if (_view == View.Expanded && _page == Page.Today) ApplyState(); // the row may appear or go
+        UpdateMood(); // rain greys the sky
     }
 
     /// <summary>Weather row: now (icon, temperature, description · city) and the next three hours.</summary>
@@ -1952,6 +2027,12 @@ public partial class IslandWindow : Window
         var control = _controls[key];
         control.Button.IsEnabled = active is not null;
         control.Button.Background = active == true ? activeBrush : (Brush)FindResource("ControlOffBrush");
+
+        // A switch that is on glows in its colour.
+        var color = ((SolidColorBrush)activeBrush).Color;
+        if (active != true) control.Button.Effect = null;
+        else if (control.Button.Effect is not DropShadowEffect glow || glow.Color != color)
+            control.Button.Effect = new DropShadowEffect { Color = color, BlurRadius = 18, ShadowDepth = 0, Opacity = 0.7 };
         control.Slash.Visibility = slash && active == true ? Visibility.Visible : Visibility.Collapsed;
         control.State.Text = active is null ? "Tidak ada" : active.Value ? activeText : inactiveText;
     }
@@ -1964,6 +2045,8 @@ public partial class IslandWindow : Window
         bool warm = _stats.CpuHistory.Count > 0; // the first reading only sets the baseline
         CpuText.Text = warm ? $"{_stats.Cpu * 100:0}%" : "…";
         CpuSpark.SetValues(_stats.CpuHistory);
+        var load = CpuColor();
+        if (CpuSpark.Stroke is not SolidColorBrush { Color: var shown } || shown != load) CpuSpark.Stroke = Frozen(new SolidColorBrush(load));
 
         MemoryText.Text = $"{FormatBytes((long)_stats.MemoryUsed)} / {FormatBytes((long)_stats.MemoryTotal)}";
         SetProgress(MemoryUsed, MemoryFree, _stats.MemoryTotal > 0 ? (double)_stats.MemoryUsed / _stats.MemoryTotal : 0);
@@ -2261,6 +2344,191 @@ public partial class IslandWindow : Window
         new Point(0, 0.5),
         new Point(1, 0.5)));
 
+    // ───────────────────────────── mood light, greeting & pointer light ─────────────────────────────
+
+    /// <summary>What the mood light shows for the current view: each page and activity has its own colours.</summary>
+    private Mood CurrentMood()
+    {
+        if (!_settings.MoodLight || _hiddenForFullscreen) return Mood.Off;
+        return _view switch
+        {
+            View.Expanded => _page switch
+            {
+                Page.Call => CallMood(0.36),
+                Page.Media or Page.Lyrics => _artSource is null ? Mood.Off : new(_accent, _accent, 0.2), // the artwork lights these already
+                Page.Timer => TimerMood(0.34),
+                Page.Today => SkyMood(0.42),
+                Page.Controls => new(MoodBlue, MoodIndigo, 0.3),
+                Page.System => new(CpuColor(), MoodBlue, 0.28),
+                _ => new(MoodCyan, MoodIndigo, 0.22), // the shelf
+            },
+            View.Activity => _activity switch
+            {
+                ActivityKind.Greeting => SkyMood(0.55),
+                ActivityKind.Notification => new(_notifyAccent, _notifyAccent, 0.42),
+                ActivityKind.File => new(MoodBlue, MoodCyan, 0.32),
+                ActivityKind.Track => _artSource is null ? Mood.Off : new(_accent, _accent, 0.3),
+                ActivityKind.TimerDone => new(MoodOrange, MoodRed, 0.5),
+                ActivityKind.Power => PowerMood(),
+                ActivityKind.Privacy or ActivityKind.Device => new(_infoAccent, _infoAccent, 0.28),
+                _ => Mood.Off, // volume: just the bar
+            },
+            View.Compact => ShowsCall ? CallMood(0.3)
+                : ShowsCompactMedia ? (_artSource is null ? Mood.Off : new(_accent, _accent, 0.18))
+                : _timer.IsActive ? TimerMood(0.26)
+                : Mood.Off,
+            _ => Mood.Off,
+        };
+    }
+
+    private Mood CallMood(double strength) => _micMuted == true
+        ? new(MoodRed, MoodPink, strength)
+        : new(MoodGreen, MoodMint, strength);
+
+    private Mood TimerMood(double strength)
+    {
+        if (!_timer.IsActive) return new(MoodOrange, MoodYellow, strength * 0.7);
+        if (_timer.IsPaused) return new(MoodOrange, MoodOrange, strength * 0.45);
+        bool urgent = _timer.Remaining.TotalSeconds <= 10;
+        return urgent ? new(MoodRed, MoodPink, strength * 1.2) : new(MoodOrange, MoodRed, strength);
+    }
+
+    private Mood PowerMood()
+    {
+        var state = _power.State;
+        return state.PluggedIn ? new(MoodGreen, MoodMint, 0.32)
+            : _batteryLow ? new(MoodRed, MoodOrange, 0.38)
+            : state.Saver ? new(MoodYellow, MoodOrange, 0.28)
+            : Mood.Off;
+    }
+
+    /// <summary>The "today" page is a little sky: dawn peach, day blue, dusk orange, night indigo, and grey or blue when it rains.</summary>
+    private Mood SkyMood(double strength)
+    {
+        var kind = _weather.Forecast is { } forecast ? WeatherForecast.KindOf(forecast.Code) : WeatherKind.Clear;
+        int hour = DateTime.Now.Hour;
+        bool night = hour is < 5 or >= 19;
+        return kind switch
+        {
+            WeatherKind.Storm => new(MoodIndigo, MoodPurple, strength),
+            WeatherKind.Rain or WeatherKind.Drizzle => new(night ? MoodIndigo : MoodBlue, MoodSteel, strength),
+            WeatherKind.Snow => new(MoodCyan, MoodSlate, strength * 0.85),
+            WeatherKind.Fog or WeatherKind.Cloudy => new(MoodSlate, night ? MoodIndigo : MoodSteel, strength * 0.85),
+            _ => hour switch
+            {
+                < 5 or >= 19 => new(MoodIndigo, MoodPurple, strength),
+                < 8 => new(MoodPeach, MoodPink, strength),
+                < 16 => new(MoodBlue, MoodCyan, strength),
+                _ => new(MoodOrange, MoodPink, strength),
+            },
+        };
+    }
+
+    /// <summary>CPU load as a colour: green, yellow from 50%, red from 80%.</summary>
+    private Color CpuColor() => _stats.Cpu switch
+    {
+        >= 0.8 => MoodRed,
+        >= 0.5 => MoodYellow,
+        _ => MoodGreen,
+    };
+
+    /// <summary>An app's colour from its icon (or the sender's photo); blue when it has none.</summary>
+    private static Color AccentOf(BitmapSource? image)
+    {
+        if (image is null) return MoodBlue;
+        try
+        {
+            var color = ArtPalette.Accent(image);
+            return color == MediaService.DefaultAccent ? MoodBlue : color;
+        }
+        catch (Exception)
+        {
+            return MoodBlue;
+        }
+    }
+
+    /// <summary>Cross-fades the mood light (and the current page's dot) to what is on screen now. Cheap when nothing changed.</summary>
+    private void UpdateMood()
+    {
+        var mood = CurrentMood();
+        if (mood == _mood) return;
+        bool lit = _mood.Strength > 0;
+        _mood = mood;
+
+        var duration = TimeSpan.FromMilliseconds(500);
+        if (mood.Strength > 0)
+        {
+            // From dark, the colours appear in place; from another colour, they flow into each other.
+            FadeColor(MoodColorA, mood.A, lit, duration);
+            FadeColor(MoodColorB, mood.B, lit, duration);
+        }
+        FadeColor(_dotBrush, mood.Strength > 0 ? Blend(mood.A, Colors.White, 0.4) : Colors.White, animate: true, duration);
+
+        if (_view == View.Activity && _activity == ActivityKind.TimerDone && mood.Strength > 0)
+        {
+            // The alarm breathes until it is dismissed (a few times, then it holds still).
+            MoodLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(mood.Strength, mood.Strength * 0.3, TimeSpan.FromMilliseconds(700))
+            {
+                AutoReverse = true,
+                RepeatBehavior = new RepeatBehavior(8),
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            });
+            return;
+        }
+        MoodLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(mood.Strength, duration) { EasingFunction = Ease });
+    }
+
+    private static void FadeColor(SolidColorBrush brush, Color color, bool animate, TimeSpan duration)
+    {
+        if (animate)
+        {
+            brush.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(color, duration) { EasingFunction = Ease });
+            return;
+        }
+        brush.BeginAnimation(SolidColorBrush.ColorProperty, null);
+        brush.Color = color;
+    }
+
+    private static Color Blend(Color from, Color to, double amount) => Color.FromRgb(
+        (byte)Math.Round(from.R + (to.R - from.R) * amount),
+        (byte)Math.Round(from.G + (to.G - from.G) * amount),
+        (byte)Math.Round(from.B + (to.B - from.B) * amount));
+
+    /// <summary>"Selamat pagi" with the date, a moment after the island starts.</summary>
+    private void ShowGreeting()
+    {
+        if (!_settings.ShowGreeting || _hiddenForFullscreen || _activity is not null || _expanded) return;
+
+        var now = DateTime.Now;
+        GreetingTitle.Text = now.Hour switch
+        {
+            >= 4 and < 11 => "Selamat pagi",
+            >= 11 and < 15 => "Selamat siang",
+            >= 15 and < 18 => "Selamat sore",
+            _ => "Selamat malam",
+        };
+        GreetingSubtitle.Text = now.ToString("dddd, d MMMM", CultureInfo.CurrentCulture);
+        GreetingIcon.Kind = (int)WeatherKind.Clear;
+        GreetingIcon.IsDay = now.Hour is >= 6 and < 18; // the sun by day, the moon at night
+        ShowActivity(ActivityKind.Greeting, GreetingPanel, 290, 56, GreetingDuration);
+    }
+
+    /// <summary>A faint light under the pointer while it moves over the open island.</summary>
+    private void MoveSpotlight(Point point)
+    {
+        SpotlightBrush.Center = SpotlightBrush.GradientOrigin = point;
+        if (_spotlightOn) return;
+        _spotlightOn = true;
+        Spotlight.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(250)));
+    }
+
+    private void HideSpotlight()
+    {
+        if (!_spotlightOn) return;
+        _spotlightOn = false;
+        Spotlight.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(300)));
+    }
+
     // ───────────────────────────── app notifications ─────────────────────────────
 
     private void OnAppNotification(AppNotification notification)
@@ -2270,6 +2538,7 @@ public partial class IslandWindow : Window
         var (name, icon) = AppInfo(notification.AppId);
         var picture = notification.ImagePath is { } path ? LoadPicture(path) : null;
         var main = picture ?? icon;
+        _notifyAccent = AccentOf(icon ?? picture); // WhatsApp green, Discord blurple...
 
         NotifyTitle.Text = notification.Title;
         NotifyBody.Text = _settings.ShowNotificationContent ? notification.Body : "Pesan baru";
@@ -2690,6 +2959,7 @@ public partial class IslandWindow : Window
     /// <summary>Open on hover only once the pointer rests: just passing over (on the way to a browser tab) does nothing.</summary>
     private void Shape_MouseMove(object sender, MouseEventArgs e)
     {
+        if (_view == View.Expanded) MoveSpotlight(e.GetPosition(Stage));
         if (_expanded || !_hoverTimer.IsEnabled) return;
         var point = e.GetPosition(this);
         if ((point - _hoverPoint).Length < 4) return;
@@ -2701,6 +2971,7 @@ public partial class IslandWindow : Window
     private void Shape_MouseLeave(object sender, MouseEventArgs e)
     {
         _hoverTimer.Stop();
+        HideSpotlight();
         if (_activity is ActivityKind.Notification or ActivityKind.File)
         {
             _activityTimer.Interval = TimeSpan.FromSeconds(2);
@@ -2830,7 +3101,6 @@ public partial class IslandWindow : Window
                 break;
             case nameof(AppSettings.ShowControlsPage):
                 if (_settings.ShowControlsPage) _quick.Start();
-        _weather.Configure(_settings.ShowWeather, _settings.WeatherCity);
                 break;
         }
         ApplyState(); // pages, sizes, visuals: cheap to re-evaluate for any change
@@ -2842,6 +3112,7 @@ public partial class IslandWindow : Window
         Shape.Margin = new Thickness(0, notch ? 0 : IslandTopMargin, 0, 0);
         ShoulderLeft.Visibility = ShoulderRight.Visibility = notch ? Visibility.Visible : Visibility.Collapsed;
         IslandRim.BorderThickness = notch ? new Thickness(1.5, 0, 1.5, 1.5) : new Thickness(1.5);
+        SheenTop.Color = notch ? Color.FromArgb(0, 255, 255, 255) : Color.FromArgb(0x3D, 255, 255, 255); // a notch's top edge is the screen's
         _animator.SquareTopCorners = notch;
     }
 

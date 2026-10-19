@@ -399,7 +399,10 @@ Assert-Running
 if (-not [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $ownWindow)) {
     throw "The island window never appeared: the app is stuck while starting"
 }
-Start-Sleep -Seconds 3
+# It says hello first ("Selamat pagi" + the date), then settles into the thin idle line.
+Start-Sleep -Milliseconds 1600
+Save-Shot "00-greeting"
+Start-Sleep -Milliseconds 3800
 Save-Shot "01-idle"
 
 # Idle, the island is a thin line at the very top edge: push the pointer up there to open it.

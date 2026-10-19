@@ -23,6 +23,37 @@
     <SolidColorBrush x:Key="CardBrush" Color="#14FFFFFF" />
     <SolidColorBrush x:Key="TimerTrackBrush" Color="#38FF9F0A" />
     <SolidColorBrush x:Key="WarningTrackBrush" Color="#38FF453A" />
+
+    <!-- System page: each tile tinted in its own colour, from the top-left corner -->
+    <LinearGradientBrush x:Key="CpuTileBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Offset="0" Color="#3330D158" />
+        <GradientStop Offset="0.75" Color="#0FFFFFFF" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="MemoryTileBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Offset="0" Color="#33FFD60A" />
+        <GradientStop Offset="0.75" Color="#0FFFFFFF" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="NetworkTileBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Offset="0" Color="#3D0A84FF" />
+        <GradientStop Offset="0.75" Color="#0FFFFFFF" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DiskTileBrush" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Offset="0" Color="#3DBF5AF2" />
+        <GradientStop Offset="0.75" Color="#0FFFFFFF" />
+    </LinearGradientBrush>
+    <SolidColorBrush x:Key="CpuLabelBrush" Color="#FF63E08A" />
+    <SolidColorBrush x:Key="MemoryLabelBrush" Color="#FFFFDF4D" />
+    <SolidColorBrush x:Key="NetworkLabelBrush" Color="#FF5AB0FF" />
+    <SolidColorBrush x:Key="DiskLabelBrush" Color="#FFD58CF7" />
+    <LinearGradientBrush x:Key="MemoryBarBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Offset="0" Color="#FFFFD60A" />
+        <GradientStop Offset="1" Color="#FFFF9F0A" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="DiskBarBrush" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Offset="0" Color="#FFDA8FFF" />
+        <GradientStop Offset="1" Color="#FF5E5CE6" />
+    </LinearGradientBrush>
+
     <SolidColorBrush x:Key="MenuBackground" Color="#F21C1C1E" />
     <SolidColorBrush x:Key="MenuBorder" Color="#24FFFFFF" />
     <SolidColorBrush x:Key="MenuHighlight" Color="#22FFFFFF" />
@@ -146,6 +177,12 @@
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <!-- Timer start buttons: in the timer's orange -->
+    <Style x:Key="TimerChip" TargetType="Button" BasedOn="{StaticResource PillButton}">
+        <Setter Property="Background" Value="#2EFF9F0A" />
+        <Setter Property="Foreground" Value="#FFFFB340" />
     </Style>
 
     <Style x:Key="IconButton" TargetType="Button">

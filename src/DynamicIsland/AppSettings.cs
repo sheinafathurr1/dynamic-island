@@ -44,6 +44,12 @@ internal sealed class AppSettings
     /// <summary>Thin rim in the artwork's colour around the compact island while music plays.</summary>
     public bool AccentRim { get; set; } = true;
 
+    /// <summary>Soft light inside the island in the colour of what it shows: a sky on "today", orange for the timer, green in a call...</summary>
+    public bool MoodLight { get; set; } = true;
+
+    /// <summary>A short "good morning" with the date when the island starts.</summary>
+    public bool ShowGreeting { get; set; } = true;
+
     /// <summary>Other apps' notifications (WhatsApp, Discord...) pop up in the island.</summary>
     public bool ShowAppNotifications { get; set; } = true;
 

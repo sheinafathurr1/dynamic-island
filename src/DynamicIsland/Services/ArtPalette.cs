@@ -3,7 +3,7 @@ using System.Windows.Media.Imaging;
 
 namespace DynamicIsland.Services;
 
-/// <summary>Picks a vivid accent colour from album art to tint the equalizer, like iOS does.</summary>
+/// <summary>Picks a vivid accent colour from album art (or an app icon) to tint the equalizer and the mood light, like iOS does.</summary>
 internal static class ArtPalette
 {
     public static Color Accent(BitmapSource tiny)
@@ -16,13 +16,14 @@ internal static class ArtPalette
         double r = 0, g = 0, b = 0, total = 0;
         for (int i = 0; i < pixels.Length; i += 4)
         {
-            double pb = pixels[i] / 255.0, pg = pixels[i + 1] / 255.0, pr = pixels[i + 2] / 255.0;
+            double pb = pixels[i] / 255.0, pg = pixels[i + 1] / 255.0, pr = pixels[i + 2] / 255.0, alpha = pixels[i + 3] / 255.0;
             double max = Math.Max(pr, Math.Max(pg, pb));
             double min = Math.Min(pr, Math.Min(pg, pb));
             double saturation = max <= 0 ? 0 : (max - min) / max;
 
             // Favour colourful, bright pixels over the dark/grey background most covers have.
-            double weight = 0.04 + saturation * saturation * max;
+            // Transparent pixels (around an app icon) don't count.
+            double weight = (0.04 + saturation * saturation * max) * alpha;
             r += pr * weight;
             g += pg * weight;
             b += pb * weight;

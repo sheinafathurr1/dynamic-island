@@ -104,12 +104,14 @@
                                     </StackPanel>
                                 </Border>
                             </Grid>
+                            <CheckBox Tag="MoodLight" Content="Cahaya warna mengikuti aktivitas" />
+                            <CheckBox Tag="ShowGreeting" Content="Sapaan saat island mulai" />
                             <CheckBox Tag="SlimWhenIdle" Content="Garis tipis saat tidak ada aktivitas" />
                             <CheckBox Tag="ReserveTopSpace" Content="Jangan tutupi jendela (sisakan ruang di atas)" />
                         </StackPanel>
                     </Border>
                     <TextBlock Style="{StaticResource Hint}"
-                               Text="Jangan tutupi jendela: jendela yang di-maximize mulai di bawah island, seperti menu bar di Mac." />
+                               Text="Cahaya warna: langit di halaman Hari ini, oranye untuk timer, hijau saat panggilan, warna aplikasi untuk pesan. Jangan tutupi jendela: jendela yang di-maximize mulai di bawah island, seperti menu bar di Mac." />
 
                     <TextBlock Text="HALAMAN" Style="{StaticResource SectionTitle}" />
                     <Border Style="{StaticResource Group}">
