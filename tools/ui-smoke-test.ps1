@@ -295,12 +295,34 @@ Start-Sleep -Milliseconds 1500
 Save-Shot "15-after-dismiss"
 
 # ── Lyrics: a media session like Spotify's, created through the same Windows API (SMTC) ──────
+# A public-domain song, so no copyrighted lyrics end up in screenshots. Pick a version that LRCLIB
+# has with synced lyrics, and check it really is the traditional text.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-try {
-    $probe = Invoke-RestMethod -TimeoutSec 15 -Headers @{ "User-Agent" = "DynamicIsland-CI" } -Uri "https://lrclib.net/api/get?track_name=Bohemian%20Rhapsody&artist_name=Queen&album_name=A%20Night%20at%20the%20Opera&duration=354"
-    Write-Host "LRCLIB probe: synced lyrics $([bool]$probe.syncedLyrics), duration $($probe.duration)"
-} catch {
-    Write-Host "LRCLIB probe failed: $_"
+$track = $null
+foreach ($candidate in @(@("Silent Night", "holy night"), @("Amazing Grace", "wretch like me"), @("Auld Lang Syne", "auld acquaintance"))) {
+    try {
+        $results = Invoke-RestMethod -TimeoutSec 15 -Headers @{ "User-Agent" = "DynamicIsland-CI" } `
+            -Uri ("https://lrclib.net/api/search?track_name=" + [Uri]::EscapeDataString($candidate[0]))
+        $track = $results | Where-Object {
+            $_.syncedLyrics -and $_.albumName -and $_.duration -gt 90 -and $_.syncedLyrics -match $candidate[1]
+        } | Select-Object -First 1
+        if ($track) { break }
+    } catch {
+        Write-Host "LRCLIB search failed: $_"
+    }
+}
+
+# Start a few lines in, so the screenshots show lyrics mid-song.
+$position = [TimeSpan]::FromSeconds(30)
+if ($track) {
+    $stamps = [regex]::Matches($track.syncedLyrics, '\[(\d+):(\d+(?:\.\d+)?)\]')
+    if ($stamps.Count -gt 5) {
+        $position = [TimeSpan]::FromSeconds([int]$stamps[5].Groups[1].Value * 60 + [double]$stamps[5].Groups[2].Value + 0.5)
+    }
+    Write-Host "Test track: $($track.artistName) - $($track.trackName) ($($track.albumName), $($track.duration)s) from $position"
+} else {
+    Write-Host "No public-domain test track found on LRCLIB; the lyrics screenshots will show the fallback state."
+    $track = [pscustomobject]@{ trackName = "Silent Night"; artistName = "Traditional"; albumName = ""; duration = 180 }
 }
 
 $player = $null
@@ -317,19 +339,19 @@ try {
     $smtc.IsPreviousEnabled = $true
     $updater = $smtc.DisplayUpdater
     $updater.Type = [Windows.Media.MediaPlaybackType]::Music
-    $updater.MusicProperties.Title = "Bohemian Rhapsody"
-    $updater.MusicProperties.Artist = "Queen"
-    $updater.MusicProperties.AlbumTitle = "A Night at the Opera"
+    $updater.MusicProperties.Title = $track.trackName
+    $updater.MusicProperties.Artist = $track.artistName
+    $updater.MusicProperties.AlbumTitle = $track.albumName
     $updater.Update()
     $timeline = [Windows.Media.SystemMediaTransportControlsTimelineProperties]::new()
     $timeline.StartTime = [TimeSpan]::Zero
     $timeline.MinSeekTime = [TimeSpan]::Zero
-    $timeline.EndTime = [TimeSpan]::FromSeconds(354)
-    $timeline.MaxSeekTime = [TimeSpan]::FromSeconds(354)
-    $timeline.Position = [TimeSpan]::FromSeconds(55)
+    $timeline.EndTime = [TimeSpan]::FromSeconds([double]$track.duration)
+    $timeline.MaxSeekTime = [TimeSpan]::FromSeconds([double]$track.duration)
+    $timeline.Position = $position
     $smtc.UpdateTimelineProperties($timeline)
     $smtc.PlaybackStatus = [Windows.Media.MediaPlaybackStatus]::Playing
-    Write-Host "Fake media session: Queen - Bohemian Rhapsody"
+    Write-Host "Fake media session: $($track.artistName) - $($track.trackName)"
 } catch {
     Write-Host "Could not create a media session: $_"
 }
