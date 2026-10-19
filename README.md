@@ -4,15 +4,12 @@ Island / notch ala iPhone & MacBook di bagian atas layar Windows. Dibuat native 
 supaya **ringan**: tidak ada Electron atau browser tersembunyi, tidak ada polling, dan tidak ada render
 saat island diam.
 
-```
-   idle                 musik diputar                    di-hover / diklik
-  ▄▄▄▄▄▄▄▄          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄         ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
- (        )        ( ▣              ▂▅▃▇ )       ( ▣▣  Judul Lagu          ▂▅▃▇ )
-  ▀▀▀▀▀▀▀▀          ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀        (     Artis                     )
-                                                (  0:42 ━━━━━━━──────── -2:31   )
-                                                (        ⏮     ⏯     ⏭         )
-                                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-```
+<p align="center">
+  <img src="docs/preview.png" alt="Tangkapan layar Dynamic Island di Windows: idle, timer, jam, alarm, gaya notch, dan menu klik kanan" width="520">
+</p>
+
+<sub>Tangkapan layar asli dari tes UI otomatis di GitHub Actions (Windows). Panel musik tidak ikut
+karena mesin CI tidak memutar media.</sub>
 
 ## Fitur
 
