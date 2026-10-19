@@ -573,7 +573,10 @@ public partial class IslandWindow : Window
         if (_shelf.Items.Count > 0 || _dropActive) pages.Add(Page.Shelf);
 
         MediaPage.Visibility = pages.Contains(Page.Media) ? Visibility.Visible : Visibility.Collapsed;
+        bool lyricsShown = LyricsPage.Visibility == Visibility.Visible;
         LyricsPage.Visibility = pages.Contains(Page.Lyrics) ? Visibility.Visible : Visibility.Collapsed;
+        if (!lyricsShown && LyricsPage.Visibility == Visibility.Visible)
+            _lyricIndex = -2; // it was never laid out while hidden: position the lines afresh
         ShelfPage.Visibility = pages.Contains(Page.Shelf) ? Visibility.Visible : Visibility.Collapsed;
         UpdateShelfMode();
         if (!pages.Contains(_page)) _page = Page.Timer;
@@ -1036,8 +1039,18 @@ public partial class IslandWindow : Window
 
         // Karaoke page: dim the old line, light up the new one and roll it to the middle.
         var fade = TimeSpan.FromMilliseconds(220);
-        if (previous >= 0 && previous < LyricsLines.Children.Count)
+        if (previous == -2)
+        {
+            foreach (UIElement line in LyricsLines.Children)
+            {
+                line.BeginAnimation(OpacityProperty, null);
+                line.Opacity = 0.3;
+            }
+        }
+        else if (previous >= 0 && previous < LyricsLines.Children.Count)
+        {
             LyricsLines.Children[previous].BeginAnimation(OpacityProperty, new DoubleAnimation(0.3, fade));
+        }
         if (index >= 0 && index < LyricsLines.Children.Count)
         {
             var current = (FrameworkElement)LyricsLines.Children[index];

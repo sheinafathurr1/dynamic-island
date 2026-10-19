@@ -310,15 +310,19 @@
                                         </Grid>
                                         <!-- Lines roll upwards; the mask fades them out at the top and bottom edge -->
                                         <Grid x:Name="LyricsViewport" Grid.Row="1" Height="122" Margin="0,8,0,0" ClipToBounds="True" Background="Transparent">
+                                            <!-- Absolute mapping: relative would stretch over the whole (very tall) lyric sheet -->
                                             <Grid.OpacityMask>
-                                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <LinearGradientBrush MappingMode="Absolute" StartPoint="0,0" EndPoint="0,122">
                                                     <GradientStop Offset="0" Color="#00000000" />
                                                     <GradientStop Offset="0.2" Color="#FF000000" />
                                                     <GradientStop Offset="0.8" Color="#FF000000" />
                                                     <GradientStop Offset="1" Color="#00000000" />
                                                 </LinearGradientBrush>
                                             </Grid.OpacityMask>
-                                            <StackPanel x:Name="LyricsLines" VerticalAlignment="Top" />
+                                            <!-- Canvas: no layout clip, so the rolled sheet is not cut off before it is moved -->
+                                            <Canvas>
+                                                <StackPanel x:Name="LyricsLines" Width="352" />
+                                            </Canvas>
                                             <TextBlock x:Name="LyricsMessage" FontSize="13" Foreground="{StaticResource SecondaryText}"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         </Grid>
