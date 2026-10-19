@@ -248,23 +248,53 @@ public static class WpnProbe
 function Get-QuietHours { [WpnProbe]::QuietHours() }
 
 # Windows Server turns Do not disturb on by default; switch it off from the notification centre
-# (Win+N) like a user would, so toasts reach the island. Windows' rules stay respected.
+# like a user would, so toasts reach the island. Windows' rules stay respected.
+function Find-DoNotDisturbButton {
+    $true_ = [System.Windows.Automation.Condition]::TrueCondition
+    foreach ($window in [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $true_)) {
+        $name = $window.Current.Name; $class = $window.Current.ClassName
+        if ($class -notlike "*CoreWindow*" -and $name -notlike "*otification*" -and $name -notlike "*Action*") { continue }
+        Write-Host "  shell window: '$name' [$class]"
+        $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $true_)
+        foreach ($element in $elements) {
+            if ($element.Current.Name -like "*disturb*" -or $element.Current.AutomationId -like "*Disturb*" -or $element.Current.AutomationId -like "*QuietHours*") {
+                Write-Host "    found: '$($element.Current.Name)' id=$($element.Current.AutomationId) type=$($element.Current.ControlType.ProgrammaticName)"
+                return $element
+            }
+        }
+        $elements | Select-Object -First 25 | ForEach-Object { Write-Host "    - '$($_.Current.Name)' id=$($_.Current.AutomationId) type=$($_.Current.ControlType.ProgrammaticName)" }
+    }
+    return $null
+}
+
 function Disable-DoNotDisturb {
     Write-Host "Do not disturb before: $(Get-QuietHours)"
     if ((Get-QuietHours) -match ': 00-00-00-00') { return }
-    [SmokeInput]::Chord(0x5B, 0x4E)   # Win + N
-    Start-Sleep -Milliseconds 2000
-    $condition = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty), "Do not disturb"
-    $button = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    $button = $null
+    # The notification centre opens with Win+N, or by clicking the clock in the taskbar.
+    foreach ($open in @({ [SmokeInput]::Chord(0x5B, 0x4E) }, { [SmokeInput]::LeftClick($screen.Right - 70, $screen.Bottom - 24) })) {
+        & $open
+        Start-Sleep -Milliseconds 2500
+        $button = Find-DoNotDisturbButton
+        if ($button) { break }
+        [SmokeInput]::Key(0x1B)
+        Start-Sleep -Milliseconds 800
+    }
+    $panel = [SmokeInput]::Capture($screen.Right - 520, $screen.Bottom - 760, 520, 760)
+    $panel.Save((Join-Path $OutDir "22a-notification-centre.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $panel.Dispose()
+    Emit-Shot "22a-notification-centre"
     if ($button) {
-        $toggle = $null
+        $toggle = $null; $invoke = $null
         if ($button.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$toggle)) { $toggle.Toggle() }
-        else { $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        elseif ($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) { $invoke.Invoke() }
+        else { $rect = $button.Current.BoundingRectangle; [SmokeInput]::LeftClick([int]($rect.X + $rect.Width / 2), [int]($rect.Y + $rect.Height / 2)) }
         Start-Sleep -Milliseconds 800
     } else {
         Write-Host "No 'Do not disturb' button found in the notification centre"
     }
     [SmokeInput]::Key(0x1B)   # Esc closes the notification centre
+    Move-Away
     Start-Sleep -Milliseconds 800
     Write-Host "Do not disturb after: $(Get-QuietHours)"
 }
