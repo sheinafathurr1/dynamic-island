@@ -626,22 +626,27 @@ $graphics.Dispose(); $face.Save($avatar, [System.Drawing.Imaging.ImageFormat]::P
 
 Write-Host "Notification database present: $(Test-Path (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Notifications\wpndatabase.db'))"
 Disable-DoNotDisturb
-try {
-    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-    $toastXml = [Windows.Data.Xml.Dom.XmlDocument]::new()
-    $toastXml.LoadXml(@"
+# The runner's notification service sometimes needs a moment ("platform unavailable"): retry.
+[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+[void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+foreach ($attempt in 1..4) {
+    try {
+        $toastXml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+        $toastXml.LoadXml(@"
 <toast><visual><binding template="ToastGeneric">
   <text>Rina</text>
   <text>Jadi rapat jam 3 nanti? Aku bawa laptopnya ya</text>
   <image placement="appLogoOverride" hint-crop="circle" src="$([Uri]::new($avatar).AbsoluteUri)"/>
 </binding></visual></toast>
 "@)
-    $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
-    $notifier.Show([Windows.UI.Notifications.ToastNotification]::new($toastXml))
-    Write-Host "Toast sent"
-} catch {
-    Write-Host "Could not send a toast: $_"
+        $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
+        $notifier.Show([Windows.UI.Notifications.ToastNotification]::new($toastXml))
+        Write-Host "Toast sent"
+        break
+    } catch {
+        Write-Host "Could not send a toast (attempt $attempt): $_"
+        Start-Sleep -Seconds 4
+    }
 }
 if (Try-FindByName "Rina" 8) {
     Start-Sleep -Milliseconds 700
