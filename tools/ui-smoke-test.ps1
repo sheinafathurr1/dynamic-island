@@ -261,7 +261,7 @@ function Disable-DoNotDisturb {
         foreach ($window in [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $any)) {
             if ($window.Current.Name -notlike "*Settings*") { continue }
             $switch = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $any) |
-                Where-Object { $_.Current.Name -like "*Do not disturb*" -and $_.GetSupportedPatterns() -contains [System.Windows.Automation.TogglePattern]::Pattern } |
+                Where-Object { $pattern = $null; $_.Current.Name -like "*Do not disturb*" -and $_.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern) } |
                 Select-Object -First 1
             if ($switch) { $settings = $window; break }
         }
