@@ -502,9 +502,10 @@ Start-Sleep -Milliseconds 1500
 Save-Shot "09-timer-compact"
 
 # Pulling the compact island works too (pressed straight away, before hovering opens it); the cat rides along.
-# Letting go must not count as a click: it springs back and stays compact.
-[SmokeInput]::LeftDown($centerX + 30, $islandY)
-foreach ($step in 1..8) { [SmokeInput]::SetCursorPos($centerX + 30 + $step * 4, $islandY + $step * 8) | Out-Null; Start-Sleep -Milliseconds 12 }
+# Letting go must not count as a click: it springs back and stays compact. Pressed on the empty middle
+# of the pill (the shelf badge on the right is a button of its own).
+[SmokeInput]::LeftDown($centerX - 40, $islandY)
+foreach ($step in 1..8) { [SmokeInput]::SetCursorPos($centerX - 40 + $step * 4, $islandY + $step * 8) | Out-Null; Start-Sleep -Milliseconds 12 }
 Save-Shot "09b-jelly-compact"
 [SmokeInput]::LeftUp()
 Start-Sleep -Milliseconds 1200

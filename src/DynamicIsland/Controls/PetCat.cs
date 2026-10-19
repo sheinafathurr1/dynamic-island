@@ -261,12 +261,12 @@ public sealed class PetCat : FrameworkElement
         double h = Hearts;
         if (h <= 0) return;
         double opacity = h < 0.15 ? h / 0.15 : (1 - h) / 0.85;
-        double scale = 1 + 0.8 * h;
+        double scale = 1.2 + 1.0 * h;
         (Point From, Point To)[] paths =
         [
-            (new Point(24, 22), new Point(10, 30)),
-            (new Point(30, 25), new Point(30, 37)),
-            (new Point(36, 22), new Point(50, 30)),
+            (new Point(22, 21), new Point(6, 31)),
+            (new Point(30, 26), new Point(30, 39)),
+            (new Point(38, 21), new Point(54, 31)),
         ];
         dc.PushOpacity(opacity);
         foreach (var (from, to) in paths)
