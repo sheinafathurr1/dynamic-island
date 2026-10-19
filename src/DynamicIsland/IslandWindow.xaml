@@ -199,12 +199,11 @@
                             <c:EqualizerBars x:Name="TrackEq" Grid.Column="2" Margin="12,0,20,0" BarHeight="16" />
                         </Grid>
 
-                        <!-- Another app's notification: picture (contact photo or app icon), sender, message, app name -->
+                        <!-- Another app's notification: picture (contact photo or app icon), sender + app name, message -->
                         <Grid x:Name="NotifyPanel" Visibility="Collapsed">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid Width="36" Height="36" Margin="11,0,12,0" VerticalAlignment="Center">
                                 <Border x:Name="NotifyPicture" CornerRadius="10" Background="{StaticResource ArtPlaceholder}"
@@ -219,13 +218,19 @@
                                         HorizontalAlignment="Right" VerticalAlignment="Bottom" BorderBrush="Black" BorderThickness="1.5"
                                         RenderOptions.BitmapScalingMode="HighQuality" Visibility="Collapsed" />
                             </Grid>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
-                                <TextBlock x:Name="NotifyTitle" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,22,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="NotifyTitle" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="NotifyApp" Grid.Column="1" FontSize="11" Foreground="{StaticResource TertiaryText}"
+                                               MaxWidth="120" TextTrimming="CharacterEllipsis" Margin="10,0,0,0" VerticalAlignment="Center" />
+                                </Grid>
                                 <TextBlock x:Name="NotifyBody" FontSize="12" Foreground="{StaticResource SecondaryText}"
                                            TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
                             </StackPanel>
-                            <TextBlock x:Name="NotifyApp" Grid.Column="2" FontSize="11" Foreground="{StaticResource TertiaryText}"
-                                       MaxWidth="96" TextTrimming="CharacterEllipsis" Margin="0,0,22,0" VerticalAlignment="Center" />
                         </Grid>
 
                         <!-- Generic icon + title + subtitle: audio device, mic / camera, timer finished -->
