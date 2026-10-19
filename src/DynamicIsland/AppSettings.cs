@@ -131,6 +131,23 @@ internal sealed class AppSettings
 
 internal static class Log
 {
+    private static readonly bool Tracing = Environment.GetEnvironmentVariable("DYNAMICISLAND_TRACE") == "1";
+
+    /// <summary>Step-by-step notes for diagnosing (only with DYNAMICISLAND_TRACE=1, e.g. in the smoke test).</summary>
+    public static void Trace(string message)
+    {
+        if (!Tracing) return;
+        try
+        {
+            Directory.CreateDirectory(AppSettings.DataDirectory);
+            File.AppendAllText(Path.Combine(AppSettings.DataDirectory, "trace.log"), $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Diagnostics only.
+        }
+    }
+
     public static void Error(Exception ex)
     {
         try

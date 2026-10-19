@@ -18,11 +18,16 @@ $ErrorActionPreference = "Stop"
 
 # Whatever fails, show what the app logged: that is usually the reason.
 trap {
-    $log = Join-Path $env:APPDATA "DynamicIsland\error.log"
-    if (Test-Path $log) {
-        Write-Host "::group::error.log"
-        Get-Content $log | Write-Host
-        Write-Host "::endgroup::"
+    Write-Host "Failed: $_"
+    foreach ($name in @("error.log", "trace.log")) {
+        $log = Join-Path $env:APPDATA "DynamicIsland\$name"
+        if (Test-Path $log) {
+            Write-Host "::group::$name"
+            Get-Content $log | Write-Host
+            Write-Host "::endgroup::"
+        } else {
+            Write-Host "No $name"
+        }
     }
     break
 }
@@ -383,6 +388,7 @@ function Set-CallTimes([long]$Start, [long]$Stop) {
 
 # ── Launch ──────────────────────────────────────────────────────────────────────────────────────
 Move-Away
+$env:DYNAMICISLAND_TRACE = "1"   # the app notes its steps in trace.log (printed when something fails)
 $script:process = Start-Process -FilePath $Exe -PassThru
 $ownWindow = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ProcessIdProperty), $script:process.Id
 $deadline = (Get-Date).AddSeconds(15)

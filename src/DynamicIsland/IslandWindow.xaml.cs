@@ -1981,6 +1981,7 @@ public partial class IslandWindow : Window
     /// <summary>A new screenshot (big thumbnail) or a finished download (its icon): drag it out, open it, show it, or keep it on the shelf.</summary>
     private void ShowFile(string path, bool screenshot)
     {
+        Log.Trace($"Preview: '{path}' (screenshot={screenshot}, hidden={_hiddenForFullscreen}, activity={_activity})");
         if (!System.IO.File.Exists(path)) return; // while hidden for full screen it waits: shown when the island returns
         _filePath = path;
         long size = 0;

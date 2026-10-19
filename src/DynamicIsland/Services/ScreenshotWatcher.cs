@@ -50,6 +50,7 @@ internal sealed class ScreenshotWatcher : IDisposable
             _folder.Filters.Add("*.jpg");
             _folder.Created += (_, e) => _dispatcher.InvokeAsync(() => OnFileCreated(e.FullPath));
         }
+        Log.Trace($"Screenshots: watching folder '{ScreenshotsFolder}'");
         CleanUpOldCopies();
     }
 
@@ -69,8 +70,8 @@ internal sealed class ScreenshotWatcher : IDisposable
         {
             if (_listening == value) return;
             _listening = value;
-            if (value) Native.AddClipboardFormatListener(_hwnd);
-            else Native.RemoveClipboardFormatListener(_hwnd);
+            bool listener = value ? Native.AddClipboardFormatListener(_hwnd) : Native.RemoveClipboardFormatListener(_hwnd);
+            Log.Trace($"Screenshots: enabled={value}, clipboard listener={listener}");
             if (_folder is not null) _folder.EnableRaisingEvents = value;
         }
     }
@@ -78,14 +79,18 @@ internal sealed class ScreenshotWatcher : IDisposable
     /// <summary>WM_CLIPBOARDUPDATE: something new on the clipboard. Only pictures from screenshot tools count.</summary>
     public void OnClipboardUpdate()
     {
+        Log.Trace($"Screenshots: clipboard changed (listening={_listening}, owner window={Native.GetClipboardOwner()})");
         if (!_listening || DateTime.UtcNow - _lastCapture < Echo || !FromCaptureTool()) return; // Win+PrtSc: file first, then clipboard
         try
         {
-            if (!Clipboard.ContainsImage()) return;
+            bool image = Clipboard.ContainsImage();
+            Log.Trace($"Screenshots: from a capture tool, image={image}");
+            if (!image) return;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return; // clipboard busy
+            Log.Trace($"Screenshots: clipboard busy ({ex.Message})");
+            return;
         }
 
         // Snipping Tool may also save the shot to Pictures\Screenshots a moment later: prefer that file.
@@ -101,6 +106,7 @@ internal sealed class ScreenshotWatcher : IDisposable
 
     private void OnFileCreated(string path)
     {
+        Log.Trace($"Screenshots: new file '{path}'");
         if (!_listening) return;
         bool expected = _pending.IsEnabled;
         _pending.Stop();
@@ -148,11 +154,13 @@ internal sealed class ScreenshotWatcher : IDisposable
             {
                 image = ReadClipboardImage();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Log.Trace($"Screenshots: reading the clipboard failed ({ex.GetType().Name}: {ex.Message})");
                 Thread.Sleep(60); // another app is holding the clipboard
             }
         }
+        Log.Trace($"Screenshots: clipboard image {(image is null ? "missing" : $"{image.PixelWidth}x{image.PixelHeight}")}");
         if (image is null) return;
 
         try
@@ -187,6 +195,7 @@ internal sealed class ScreenshotWatcher : IDisposable
 
     private void Raise(string path)
     {
+        Log.Trace($"Screenshots: captured '{path}'");
         _lastCapture = DateTime.UtcNow;
         Captured?.Invoke(path);
     }
