@@ -43,6 +43,8 @@ public static class SmokeInput
     public static void Wheel(int delta)         { mouse_event(0x0800, 0, 0, unchecked((uint)delta), UIntPtr.Zero); }
     public static void HWheel(int delta)        { mouse_event(0x1000, 0, 0, unchecked((uint)delta), UIntPtr.Zero); }
     public static void ShiftWheel(int delta)    { keybd_event(0x10, 0, 0, UIntPtr.Zero); Wheel(delta); System.Threading.Thread.Sleep(150); keybd_event(0x10, 0, 2, UIntPtr.Zero); }
+    public static void Key(byte key)            { keybd_event(key, 0, 0, UIntPtr.Zero); keybd_event(key, 0, 2, UIntPtr.Zero); }
+    public static void Chord(byte modifier, byte key) { keybd_event(modifier, 0, 0, UIntPtr.Zero); Key(key); keybd_event(modifier, 0, 2, UIntPtr.Zero); }
 
     // SRCCOPY | CAPTUREBLT: CAPTUREBLT is required to include layered (transparent) windows such as the island.
     public static Bitmap Capture(int x, int y, int width, int height)
@@ -187,20 +189,9 @@ function Save-CenterShot([string]$Name, [int]$Width, [int]$Height) {
     Emit-Shot $Name
 }
 
-# What Windows did with the test toast: its own banner (bottom right), the notification settings,
-# Do not disturb, and the newest rows of the notification database the island reads.
-function Show-NotificationDiagnostics {
-    $bitmap = [SmokeInput]::Capture($screen.Right - 460, $screen.Bottom - 300, 460, 300)
-    $bitmap.Save((Join-Path $OutDir "22b-windows-toast.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-    $bitmap.Dispose()
-    Emit-Shot "22b-windows-toast"
-    foreach ($key in @("HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications",
-                       "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
-                       "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe")) {
-        $values = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
-        Write-Host "$key -> $(if ($values) { ($values.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' } else { 'missing' })"
-    }
-    Add-Type -TypeDefinition @"
+# Reads Windows' notification database (through the SQLite that ships with Windows) and the
+# Do not disturb state, to explain what happened to a test notification.
+Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -253,13 +244,51 @@ public static class WpnProbe
     }
 }
 "@
+
+function Get-QuietHours { [WpnProbe]::QuietHours() }
+
+# Windows Server turns Do not disturb on by default; switch it off from the notification centre
+# (Win+N) like a user would, so toasts reach the island. Windows' rules stay respected.
+function Disable-DoNotDisturb {
+    Write-Host "Do not disturb before: $(Get-QuietHours)"
+    if ((Get-QuietHours) -match ': 00-00-00-00') { return }
+    [SmokeInput]::Chord(0x5B, 0x4E)   # Win + N
+    Start-Sleep -Milliseconds 2000
+    $condition = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty), "Do not disturb"
+    $button = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    if ($button) {
+        $toggle = $null
+        if ($button.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$toggle)) { $toggle.Toggle() }
+        else { $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        Start-Sleep -Milliseconds 800
+    } else {
+        Write-Host "No 'Do not disturb' button found in the notification centre"
+    }
+    [SmokeInput]::Key(0x1B)   # Esc closes the notification centre
+    Start-Sleep -Milliseconds 800
+    Write-Host "Do not disturb after: $(Get-QuietHours)"
+}
+
+# What Windows did with the test toast: its own banner (bottom right), the notification settings,
+# Do not disturb, and the newest rows of the notification database the island reads.
+function Show-NotificationDiagnostics {
+    $bitmap = [SmokeInput]::Capture($screen.Right - 460, $screen.Bottom - 300, 460, 300)
+    $bitmap.Save((Join-Path $OutDir "22b-windows-toast.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Dispose()
+    Emit-Shot "22b-windows-toast"
+    foreach ($key in @("HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications",
+                       "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
+                       "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe")) {
+        $values = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+        Write-Host "$key -> $(if ($values) { ($values.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' } else { 'missing' })"
+    }
     Write-Host "Quiet hours (Do not disturb) state: $([WpnProbe]::QuietHours())"
     $db = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Notifications\wpndatabase.db"
     Write-Host "Now as FILETIME: $([DateTime]::UtcNow.ToFileTimeUtc())"
     Write-Host "Notification table:"
     Write-Host ([WpnProbe]::Query($db, "SELECT sql FROM sqlite_master WHERE name IN ('Notification', 'NotificationHandler')"))
     Write-Host "Newest notifications:"
-    Write-Host ([WpnProbe]::Query($db, "SELECT n.Id, n.Type, h.PrimaryId, n.ArrivalTime, n.ExpiryTime, CAST(n.Payload AS TEXT) FROM Notification n LEFT JOIN NotificationHandler h ON h.RecordId = n.HandlerId ORDER BY n.Id DESC LIMIT 6"))
+    Write-Host ([WpnProbe]::Query($db, "SELECT n.rowid, n.Id, n.Type, h.PrimaryId, n.ArrivalTime, CAST(n.Payload AS TEXT) FROM Notification n LEFT JOIN NotificationHandler h ON h.RecordId = n.HandlerId ORDER BY n.rowid DESC LIMIT 6"))
 }
 
 # Like Find-ByName, but for checks that depend on the runner: $null instead of failing.
@@ -581,6 +610,7 @@ $graphics.DrawString("R", $font, [System.Drawing.Brushes]::White, (New-Object Sy
 $graphics.Dispose(); $face.Save($avatar, [System.Drawing.Imaging.ImageFormat]::Png); $face.Dispose()
 
 Write-Host "Notification database present: $(Test-Path (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Notifications\wpndatabase.db'))"
+Disable-DoNotDisturb
 try {
     [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
     [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]

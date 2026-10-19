@@ -19,12 +19,14 @@ internal sealed record AppNotification(string AppId, string Title, string Body, 
 /// </summary>
 internal sealed class NotificationWatcher : IDisposable
 {
+    // New rows get a higher rowid ("Order"); "Id" is only a per-app number. The arrival time catches
+    // the rare row that reuses the rowid of a newest notification that was just dismissed.
     private const string NewToastsSql =
         """
-        SELECT n.Id, n.Payload, h.PrimaryId, n.ArrivalTime, n.Tag, n."Group"
+        SELECT n.rowid, n.Payload, h.PrimaryId, n.ArrivalTime, n.Tag, n."Group"
         FROM Notification n JOIN NotificationHandler h ON h.RecordId = n.HandlerId
-        WHERE n.Type = 'toast' AND n.Id > ?1
-        ORDER BY n.Id LIMIT 20
+        WHERE n.Type = 'toast' AND (n.rowid > ?1 OR n.ArrivalTime > ?2)
+        ORDER BY n.rowid LIMIT 20
         """;
 
     private static readonly string Folder = Path.Combine(
@@ -40,7 +42,8 @@ internal sealed class NotificationWatcher : IDisposable
     private readonly Dictionary<string, DateTime> _recent = [];
     private readonly Timer _timer;
     private FileSystemWatcher? _watcher;
-    private long _lastId = -1;
+    private long _lastRow = -1;
+    private long _lastArrival;
     private bool _useSnapshot;
     private int _failures;
     private int _pending;
@@ -61,7 +64,7 @@ internal sealed class NotificationWatcher : IDisposable
     public void Start()
     {
         if (_watcher is not null || !IsSupported) return;
-        _lastId = -1; // re-baseline: only what arrives from now on
+        _lastRow = -1; // re-baseline: only what arrives from now on
         _watcher = new FileSystemWatcher(Folder, "wpndatabase.db*")
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
@@ -95,19 +98,24 @@ internal sealed class NotificationWatcher : IDisposable
         if (!Monitor.TryEnter(_gate)) return;
         try
         {
-            if (_lastId < 0)
+            if (_lastRow < 0)
             {
-                Read(db => db.Query("SELECT IFNULL(MAX(Id), 0) FROM Notification", [], row => _lastId = row.Int64(0)));
+                Read(db => db.Query("SELECT IFNULL(MAX(rowid), 0), IFNULL(MAX(ArrivalTime), 0) FROM Notification", [], row =>
+                {
+                    _lastRow = row.Int64(0);
+                    _lastArrival = row.Int64(1);
+                }));
                 return;
             }
 
-            var rows = new List<(long Id, byte[] Payload, string AppId, long Arrival, string Tag, string Group)>();
-            Read(db => db.Query(NewToastsSql, [_lastId], row =>
+            var rows = new List<(long Row, byte[] Payload, string AppId, long Arrival, string Tag, string Group)>();
+            Read(db => db.Query(NewToastsSql, [_lastRow, _lastArrival], row =>
                 rows.Add((row.Int64(0), row.Blob(1), row.Text(2), row.Int64(3), row.Text(4), row.Text(5)))));
 
             foreach (var row in rows)
             {
-                _lastId = Math.Max(_lastId, row.Id);
+                _lastRow = Math.Max(_lastRow, row.Row);
+                _lastArrival = Math.Max(_lastArrival, row.Arrival);
                 if (ToNotification(row.Payload, row.AppId, row.Arrival, row.Tag, row.Group) is { } notification)
                     _dispatcher.InvokeAsync(() => Received?.Invoke(notification));
             }
