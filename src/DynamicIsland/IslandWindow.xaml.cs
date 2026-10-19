@@ -733,9 +733,9 @@ public partial class IslandWindow : Window
         if (_activity == ActivityKind.TimerDone && kind != ActivityKind.TimerDone) return;
 
         bool switching = _activity != kind;
-        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, NotifyPanel, InfoPanel })
+        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, NotifyPanel, FilePanel, InfoPanel })
             candidate.Visibility = ReferenceEquals(candidate, panel) ? Visibility.Visible : Visibility.Collapsed;
-        if ((switching || kind == ActivityKind.Notification) && _view == View.Activity) FadeIn(panel); // a new message pops in again
+        if ((switching || kind is ActivityKind.Notification or ActivityKind.File) && _view == View.Activity) FadeIn(panel); // a new one pops in again
 
         _activity = kind;
         _activitySize = new Size(width, height);
