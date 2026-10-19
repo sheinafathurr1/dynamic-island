@@ -339,10 +339,13 @@ Start-Sleep -Seconds 5
 Assert-Running
 Save-Shot "01-idle"
 
-# Hover → expanded carousel. Nothing plays and no timer runs, so it opens on "today".
+# Idle, the island is a thin line at the very top edge: push the pointer up there to open it.
+# Nothing plays and no timer runs, so it opens on "today". Then into the open island.
 $islandY = 24
-[SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
-Start-Sleep -Milliseconds 1500
+[SmokeInput]::SetCursorPos($centerX, 1) | Out-Null
+Start-Sleep -Milliseconds 1200
+[SmokeInput]::SetCursorPos($centerX, $islandY + 16) | Out-Null
+Start-Sleep -Milliseconds 600
 Assert-Running
 Save-Shot "02-today"
 
@@ -629,29 +632,61 @@ Disable-DoNotDisturb
 # The runner's notification service sometimes needs a moment ("platform unavailable"): retry.
 [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
 [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-foreach ($attempt in 1..4) {
-    try {
-        $toastXml = [Windows.Data.Xml.Dom.XmlDocument]::new()
-        $toastXml.LoadXml(@"
+$powerShellApp = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+function Send-Toast([string]$Title, [string]$Message) {
+    foreach ($attempt in 1..4) {
+        try {
+            $toastXml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+            $toastXml.LoadXml(@"
 <toast><visual><binding template="ToastGeneric">
-  <text>Rina</text>
-  <text>Jadi rapat jam 3 nanti? Aku bawa laptopnya ya</text>
+  <text>$Title</text>
+  <text>$Message</text>
   <image placement="appLogoOverride" hint-crop="circle" src="$([Uri]::new($avatar).AbsoluteUri)"/>
 </binding></visual></toast>
 "@)
-        $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
-        $notifier.Show([Windows.UI.Notifications.ToastNotification]::new($toastXml))
-        Write-Host "Toast sent"
-        break
-    } catch {
-        Write-Host "Could not send a toast (attempt $attempt): $_"
-        Start-Sleep -Seconds 4
+            [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($powerShellApp).Show([Windows.UI.Notifications.ToastNotification]::new($toastXml))
+            Write-Host "Toast sent: $Title"
+            return
+        } catch {
+            Write-Host "Could not send a toast (attempt $attempt): $_"
+            Start-Sleep -Seconds 4
+        }
     }
 }
+
+# Windows' own banner shows in the bottom-right corner.
+function Save-CornerShot([string]$Name) {
+    $bitmap = [SmokeInput]::Capture($screen.Right - 460, $screen.Bottom - 300, 460, 300)
+    $bitmap.Save((Join-Path $OutDir "$Name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Dispose()
+    Emit-Shot $Name
+}
+
+$bannerKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\$powerShellApp"
+Send-Toast "Rina" "Jadi rapat jam 3 nanti? Aku bawa laptopnya ya"
 if (Try-FindByName "Rina" 8) {
     Start-Sleep -Milliseconds 700
     Save-Shot "22-notification"
+    Save-CornerShot "22b-windows-corner-first"
     Write-Host "Notification: shown in the island"
+
+    # The island now owns this app's pop-ups: Windows' banner for it is switched off, so the next
+    # message shows once (in the island), not twice.
+    $showBanner = (Get-ItemProperty -Path $bannerKey -Name ShowBanner -ErrorAction SilentlyContinue).ShowBanner
+    Write-Host "Windows banner switch for the test app after the first message: ShowBanner=$showBanner"
+    if ($showBanner -ne 0) { throw "The island did not take over the app's Windows banner (ShowBanner=$showBanner)" }
+    Move-Away
+    Start-Sleep -Seconds 7
+    Send-Toast "Budi" "Nanti malam main badminton?"
+    if (Try-FindByName "Budi" 8) {
+        Start-Sleep -Milliseconds 700
+        Save-Shot "22c-notification-second"
+        Save-CornerShot "22d-windows-corner-second"
+        Write-Host "Second notification: shown in the island"
+    } else {
+        Write-Host "Second notification: not shown in the island"
+        Show-NotificationDiagnostics
+    }
 } else {
     Save-Shot "22-notification"
     Write-Host "Notification: not shown in the island; diagnostics:"
@@ -735,14 +770,48 @@ Save-Shot "16-notch-idle"
 Start-Sleep -Milliseconds 1500
 Save-Shot "17-notch-today"
 
-# Exit through the menu and make sure the process really ends.
+# "Don't cover windows": the top strip is reserved, so a maximised window starts below the island.
 Move-Away
 Start-Sleep -Milliseconds 800
+[SmokeInput]::RightClick($centerX, 14)
+Start-Sleep -Milliseconds 1000
+Invoke-ByName "Jangan tutupi jendela (sisakan ruang di atas)"
+Move-Away
+Start-Sleep -Milliseconds 1500
+$workTop = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Top
+Write-Host "Work area top with the strip reserved: $workTop px"
+if ($workTop -lt 25) { throw "Reserving space did not move the work area down (top = $workTop)" }
+$window = New-Object System.Windows.Forms.Form
+$window.Text = "Jendela yang di-maximize"
+$window.BackColor = [System.Drawing.Color]::FromArgb(255, 245, 245, 247)
+$window.WindowState = "Maximized"
+$window.Show()
+[System.Windows.Forms.Application]::DoEvents()
+Start-Sleep -Milliseconds 1200
+[System.Windows.Forms.Application]::DoEvents()
+Write-Host "Maximised window starts at y = $($window.Top) px"
+Save-Shot "25-reserved-space" 760 120
+$window.Close()
+[SmokeInput]::RightClick($centerX, 14)
+Start-Sleep -Milliseconds 1000
+Invoke-ByName "Jangan tutupi jendela (sisakan ruang di atas)"
+Move-Away
+Start-Sleep -Milliseconds 1500
+$workTop = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Top
+Write-Host "Work area top after giving the strip back: $workTop px"
+if ($workTop -ne 0) { throw "The reserved strip was not given back (top = $workTop)" }
+
+# Exit through the menu and make sure the process really ends.
 [SmokeInput]::RightClick($centerX, 14)
 Start-Sleep -Milliseconds 1000
 Invoke-ByName "Keluar"
 if (-not $script:process.WaitForExit(10000)) { throw "Dynamic Island did not exit after 'Keluar'" }
 Write-Host "Exited with code $($script:process.ExitCode)"
+
+# Closing the island gives Windows its banners back.
+$showBanner = (Get-ItemProperty -Path $bannerKey -Name ShowBanner -ErrorAction SilentlyContinue).ShowBanner
+Write-Host "Windows banner switch after exit: '$showBanner'"
+if ($showBanner -eq 0) { throw "Windows' banner was not switched back on when the island closed" }
 if ($player) { $player.Dispose() }
 
 $log = Join-Path $dataDir "error.log"

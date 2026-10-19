@@ -53,6 +53,18 @@ internal sealed class AppSettings
     /// <summary>iCal link (or .ics file) for the agenda on the "today" page; empty = none.</summary>
     public string CalendarSource { get; set; } = "";
 
+    /// <summary>With nothing to show, shrink to a thin line at the very top so it covers nothing.</summary>
+    public bool SlimWhenIdle { get; set; } = true;
+
+    /// <summary>Reserve a strip at the top of the screen (like a taskbar) so maximised windows start below the island.</summary>
+    public bool ReserveTopSpace { get; set; }
+
+    /// <summary>Notifications shown in the island don't also pop up as Windows' own banner.</summary>
+    public bool HideWindowsBanners { get; set; } = true;
+
+    /// <summary>Apps whose Windows banner the island switched off (and turns back on when it closes).</summary>
+    public List<string> BannerHiddenApps { get; set; } = [];
+
     public static AppSettings Load()
     {
         try

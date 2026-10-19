@@ -36,6 +36,8 @@
                     <Separator />
                     <MenuItem x:Name="MenuIsland" Header="Gaya island (melayang)" Click="MenuIsland_Click" />
                     <MenuItem x:Name="MenuNotch" Header="Gaya notch (menempel di atas)" Click="MenuNotch_Click" />
+                    <MenuItem x:Name="MenuSlim" Header="Garis tipis saat tidak ada aktivitas" Click="MenuSlim_Click" />
+                    <MenuItem x:Name="MenuReserve" Header="Jangan tutupi jendela (sisakan ruang di atas)" Click="MenuReserve_Click" />
                     <Separator />
                     <MenuItem Header="Notifikasi">
                         <MenuItem x:Name="MenuVolume" Header="Perubahan volume" Click="MenuVolume_Click" />
@@ -45,6 +47,7 @@
                         <Separator />
                         <MenuItem x:Name="MenuApps" Header="Notifikasi aplikasi (WhatsApp, Discord…)" Click="MenuApps_Click" />
                         <MenuItem x:Name="MenuAppContent" Header="Tampilkan isi pesan" Click="MenuAppContent_Click" />
+                        <MenuItem x:Name="MenuNoDouble" Header="Tanpa banner Windows (tidak dobel)" Click="MenuNoDouble_Click" />
                     </MenuItem>
                     <MenuItem Header="Musik">
                         <MenuItem x:Name="MenuLyrics" Header="Tampilkan lirik (lrclib.net)" Click="MenuLyrics_Click" />
@@ -66,9 +69,9 @@
                     Width="120" Height="32" CornerRadius="16">
                 <Grid x:Name="Stage">
 
-                    <!-- Idle: empty pill, plus the mic / camera dots when they are in use -->
+                    <!-- Idle: a thin line at the top edge, or an empty pill with the mic / camera dots when they are in use -->
                     <Grid x:Name="IdleView" VerticalAlignment="Top" Visibility="Collapsed">
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                        <StackPanel x:Name="IdleContent" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
                             <StackPanel x:Name="IdleShelfBadge" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
                                         Background="Transparent" Cursor="Hand" Visibility="Collapsed"
                                         MouseLeftButtonUp="ShelfBadge_MouseLeftButtonUp">

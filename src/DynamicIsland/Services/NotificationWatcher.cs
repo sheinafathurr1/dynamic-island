@@ -57,6 +57,9 @@ internal sealed class NotificationWatcher : IDisposable
     /// <summary>Raised on the UI thread for each new notification that Windows would show as a banner.</summary>
     public event Action<AppNotification>? Received;
 
+    /// <summary>Apps whose Windows banner the island switched off itself: their toasts are still shown here.</summary>
+    public Func<string, bool>? IsBannerHiddenByIsland { get; set; }
+
     public static bool IsSupported => File.Exists(DatabasePath);
 
     public bool IsRunning => _watcher is not null;
@@ -198,7 +201,7 @@ internal sealed class NotificationWatcher : IDisposable
     }
 
     /// <summary>What Windows itself would do: no banners during Do not disturb or for apps set to "off" or "notification centre only".</summary>
-    private static bool WouldShowBanner(string appId)
+    private bool WouldShowBanner(string appId)
     {
         try
         {
@@ -212,7 +215,8 @@ internal sealed class NotificationWatcher : IDisposable
             using var settings = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings");
             if (settings?.GetValue("NOC_GLOBAL_SETTING_TOASTS_ENABLED") is 0) return false;
             using var app = settings?.OpenSubKey(appId);
-            if (app?.GetValue("Enabled") is 0 || app?.GetValue("ShowBanner") is 0) return false;
+            if (app?.GetValue("Enabled") is 0) return false;
+            if (app?.GetValue("ShowBanner") is 0 && IsBannerHiddenByIsland?.Invoke(appId) != true) return false;
         }
         catch (Exception)
         {

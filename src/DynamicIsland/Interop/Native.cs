@@ -23,6 +23,10 @@ internal static class Native
 
     public const uint ABM_NEW = 0x0;
     public const uint ABM_REMOVE = 0x1;
+    public const uint ABM_QUERYPOS = 0x2;
+    public const uint ABM_SETPOS = 0x3;
+    public const uint ABE_TOP = 1;
+    public const int ABN_POSCHANGED = 0x1;
     public const int ABN_FULLSCREENAPP = 0x2;
 
     public const uint MONITOR_DEFAULTTONULL = 0;
@@ -111,6 +115,10 @@ internal static class Native
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorPos(out POINT point);
 
     public const int SW_SHOW = 5;
     public const int SW_RESTORE = 9;

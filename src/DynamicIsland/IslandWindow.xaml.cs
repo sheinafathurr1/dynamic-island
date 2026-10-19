@@ -60,6 +60,7 @@ public partial class IslandWindow : Window
     private static readonly TimeSpan PauseGrace = TimeSpan.FromSeconds(45);
 
     private const double PageWidth = 400;
+    private const double IslandTopMargin = 8;
     private const double DotsSpace = 16;
     private const int WM_MOUSEHWHEEL = 0x020E;
     private const int MaxShelfTiles = 5;
@@ -67,6 +68,8 @@ public partial class IslandWindow : Window
 
     /// <summary>Show each lyric line a hair early so it appears together with the voice.</summary>
     private static readonly TimeSpan LyricLead = TimeSpan.FromMilliseconds(150);
+
+    private static readonly TimeSpan NotificationDuration = TimeSpan.FromSeconds(5);
 
     /// <summary>Silence this long while "playing" (muted player, music on another output) hands the bars back to the canned loop.</summary>
     private static readonly TimeSpan LiveAudioGrace = TimeSpan.FromSeconds(2.5);
@@ -88,6 +91,9 @@ public partial class IslandWindow : Window
     private readonly IslandAnimator _animator;
     private readonly SpringValue _strip;
     private readonly TranslateTransform _stripOffset = new();
+    private readonly SpringValue _lift;
+    private readonly TranslateTransform _liftOffset = new();
+    private readonly BannerSwitch _banners;
     private VolumeService? _volume;
     private PrivacyMonitor? _privacy;
     private ShellHooks? _shell;
@@ -95,7 +101,7 @@ public partial class IslandWindow : Window
     private CalendarDialog? _calendarDialog;
     private nint _hwnd;
 
-    private readonly DispatcherTimer _hoverTimer = new() { Interval = TimeSpan.FromMilliseconds(170) };
+    private readonly DispatcherTimer _hoverTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private readonly DispatcherTimer _leaveTimer = new() { Interval = TimeSpan.FromMilliseconds(320) };
     private readonly DispatcherTimer _activityTimer = new();
     private readonly DispatcherTimer _graceTimer = new() { Interval = PauseGrace };
@@ -116,6 +122,8 @@ public partial class IslandWindow : Window
     private bool _wasPlaying;
     private bool _batteryLow;
     private DateTime _pausedAt = DateTime.MinValue;
+    private Point _hoverPoint;
+    private bool? _slimShown;
     private string? _microphoneApp;
     private string? _cameraApp;
 
@@ -181,6 +189,9 @@ public partial class IslandWindow : Window
         _animator = new IslandAnimator(Island, Stage);
         _strip = new SpringValue(ApplyStripOffset);
         PageStrip.RenderTransform = _stripOffset;
+        _lift = new SpringValue(y => _liftOffset.Y = y);
+        Shape.RenderTransform = _liftOffset;
+        _banners = new BannerSwitch(_settings);
         _lyricsScroll = new SpringValue(y => _lyricsOffset.Y = y);
         LyricsLines.RenderTransform = _lyricsOffset;
         foreach (var page in new FrameworkElement[] { MediaPage, LyricsPage, TimerPage, TodayPage, ShelfPage })
@@ -200,6 +211,11 @@ public partial class IslandWindow : Window
         _leaveTimer.Tick += (_, _) =>
         {
             _leaveTimer.Stop();
+            if (IsPointerAboveIsland())
+            {
+                _leaveTimer.Start(); // opened from the thin line: the pointer still rests at the screen edge just above
+                return;
+            }
             SetExpanded(false);
         };
         _activityTimer.Tick += (_, _) => EndActivity();
@@ -227,6 +243,7 @@ public partial class IslandWindow : Window
         OnShelfChanged();
         AttachDragOut(ShelfDragAll, () => _shelf.Items.ToList(), open: null);
         Shape.MouseWheel += Shape_MouseWheel;
+        Shape.MouseMove += Shape_MouseMove;
         _calendar.Changed += OnCalendarChanged;
         _calendar.SetSource(_settings.CalendarSource);
 
@@ -246,6 +263,7 @@ public partial class IslandWindow : Window
         _shell.FullscreenChanged += OnFullscreenChanged;
         _shell.PowerChanged += OnPowerChanged;
         _shell.DisplayChanged += () => Dispatcher.InvokeAsync(PositionWindow, DispatcherPriority.Background);
+        ApplyReservation();
 
         var source = HwndSource.FromHwnd(_hwnd);
         source?.AddHook(_shell.WndProc);
@@ -257,6 +275,7 @@ public partial class IslandWindow : Window
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
         base.OnDpiChanged(oldDpi, newDpi);
+        ApplyReservation();
         Dispatcher.InvokeAsync(PositionWindow, DispatcherPriority.Background);
     }
 
@@ -265,6 +284,7 @@ public partial class IslandWindow : Window
         _media.Dispose();
         _spectrum.Dispose();
         _notifications?.Dispose();
+        _banners.RestoreAll(forget: false); // Windows shows its own banners again while the island is closed
         _volume?.Dispose();
         _privacy?.Dispose();
         _shell?.Dispose();
@@ -303,9 +323,13 @@ public partial class IslandWindow : Window
 
         try
         {
-            _notifications = new NotificationWatcher(Dispatcher);
+            _notifications = new NotificationWatcher(Dispatcher) { IsBannerHiddenByIsland = _banners.IsHiddenByIsland };
             _notifications.Received += OnAppNotification;
-            if (_settings.ShowAppNotifications) _notifications.Start();
+            if (_settings.ShowAppNotifications)
+            {
+                _notifications.Start();
+                _banners.ApplyAll();
+            }
         }
         catch (Exception ex)
         {
@@ -331,7 +355,8 @@ public partial class IslandWindow : Window
 
     /// <summary>
     /// Centres the window on the primary monitor, at the top of its work area (below the taskbar
-    /// when the taskbar sits at the top). Physical pixels, so it is right at any scaling.
+    /// when the taskbar sits at the top), or inside its own reserved strip. Physical pixels, so it is
+    /// right at any scaling.
     /// </summary>
     private void PositionWindow()
     {
@@ -340,7 +365,25 @@ public partial class IslandWindow : Window
 
         int width = rect.Right - rect.Left;
         int x = monitor.Left + (monitor.Right - monitor.Left - width) / 2;
-        Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, workArea.Top, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+        int top = _shell?.ReservedTop ?? workArea.Top; // our own strip is part of the "used" area, so not workArea
+        Native.SetWindowPos(_hwnd, Native.HWND_TOPMOST, x, top, 0, 0, Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+    }
+
+    /// <summary>
+    /// "Don't cover windows": reserve the compact island's height at the top of the screen, like a
+    /// taskbar, so maximised windows (browser tabs!) start below it. Opening the island still overlaps.
+    /// </summary>
+    private void ApplyReservation()
+    {
+        if (_shell is null) return;
+        if (!_settings.ReserveTopSpace)
+        {
+            _shell.ReserveTop(0);
+            return;
+        }
+        bool notch = _settings.Style == IslandStyle.Notch;
+        double height = notch ? 32 : IslandTopMargin + 32 + 4;
+        _shell.ReserveTop((int)Math.Ceiling(height * VisualTreeHelper.GetDpi(this).DpiScaleY));
     }
 
     private void OnFullscreenChanged(bool fullscreen)
@@ -374,6 +417,9 @@ public partial class IslandWindow : Window
 
     private bool ShowsPrivacyDots => _settings.ShowPrivacy && (_microphoneApp is not null || _cameraApp is not null);
 
+    /// <summary>Nothing to show (and no mic / camera dots): just a thin line at the screen edge, covering nothing.</summary>
+    private bool ShowsSlimIdle => _settings.SlimWhenIdle && !ShowsPrivacyDots;
+
     private void SetExpanded(bool expanded)
     {
         if (_expanded == expanded) return;
@@ -393,6 +439,15 @@ public partial class IslandWindow : Window
         else
         {
             EndDrag();
+
+            // A message that came in while the island was open gets its full time once it closes
+            // (its Windows banner may be switched off, so this is where it is seen).
+            if (_activity == ActivityKind.Notification)
+            {
+                _activityTimer.Stop();
+                _activityTimer.Interval = NotificationDuration;
+                _activityTimer.Start();
+            }
         }
         ApplyState();
     }
@@ -412,6 +467,7 @@ public partial class IslandWindow : Window
 
         var (width, height, radius) = SizeOf(view);
         _animator.AnimateTo(width, height, radius);
+        UpdateSlim(view);
         SwitchTo(view, width, height);
         ScheduleLyricTick();
         ConfigureVisuals();
@@ -430,9 +486,34 @@ public partial class IslandWindow : Window
             case View.Expanded:
                 return (PageWidth, PageHeight(_page) + DotsSpace, notch ? 28 : 38);
             default:
+                if (ShowsSlimIdle) return (110, 5, 2.5);
                 if (notch) return (180, 30, 10);
                 return ShowsPrivacyDots || _shelf.Items.Count > 0 ? (140, 32, 16) : (120, 32, 16);
         }
+    }
+
+    /// <summary>The thin idle line sits right at the screen edge (the floating style's gap closes) and has no shoulders.</summary>
+    private void UpdateSlim(View view)
+    {
+        bool slim = view == View.Idle && ShowsSlimIdle;
+        double lift = slim ? -Shape.Margin.Top : 0;
+        if (_lift.Target != lift) _lift.AnimateTo(lift);
+
+        if (_slimShown == slim) return;
+        _slimShown = slim;
+        IdleContent.Visibility = slim ? Visibility.Collapsed : Visibility.Visible;
+        var shoulders = new DoubleAnimation(slim ? 0 : 1, TimeSpan.FromMilliseconds(slim ? 120 : 260));
+        ShoulderLeft.BeginAnimation(OpacityProperty, shoulders);
+        ShoulderRight.BeginAnimation(OpacityProperty, shoulders);
+    }
+
+    /// <summary>True while the pointer is in the gap between the screen edge and the (floating) island, right above it.</summary>
+    private bool IsPointerAboveIsland()
+    {
+        if (!_expanded || !Native.GetCursorPos(out var cursor)) return false;
+        var pointer = PointFromScreen(new Point(cursor.X, cursor.Y));
+        var island = Island.TranslatePoint(new Point(0, 0), this);
+        return pointer.Y >= 0 && pointer.Y < island.Y && pointer.X >= island.X && pointer.X <= island.X + Island.ActualWidth;
     }
 
     private double PageHeight(Page page) => page switch
@@ -1819,7 +1900,8 @@ public partial class IslandWindow : Window
         NotifyBadge.Background = badge ? new ImageBrush(icon) { Stretch = Stretch.UniformToFill } : null;
 
         _notification = notification;
-        ShowActivity(ActivityKind.Notification, NotifyPanel, 400, 56, TimeSpan.FromSeconds(5));
+        ShowActivity(ActivityKind.Notification, NotifyPanel, 400, 56, NotificationDuration);
+        _banners.Hide(notification.AppId); // from now on this app's messages pop up here only, not twice
     }
 
     /// <summary>Display name and Start-menu icon of an app, cached per app id.</summary>
@@ -2215,7 +2297,20 @@ public partial class IslandWindow : Window
             _activityTimer.Stop();
             return;
         }
-        if (!_expanded) _hoverTimer.Start();
+        if (_expanded) return;
+        _hoverPoint = e.GetPosition(this);
+        _hoverTimer.Start();
+    }
+
+    /// <summary>Open on hover only once the pointer rests: just passing over (on the way to a browser tab) does nothing.</summary>
+    private void Shape_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_expanded || !_hoverTimer.IsEnabled) return;
+        var point = e.GetPosition(this);
+        if ((point - _hoverPoint).Length < 4) return;
+        _hoverPoint = point;
+        _hoverTimer.Stop();
+        _hoverTimer.Start();
     }
 
     private void Shape_MouseLeave(object sender, MouseEventArgs e)
@@ -2279,6 +2374,10 @@ public partial class IslandWindow : Window
         MenuApps.IsEnabled = NotificationWatcher.IsSupported;
         MenuAppContent.IsChecked = _settings.ShowNotificationContent;
         MenuAppContent.IsEnabled = MenuApps.IsChecked;
+        MenuNoDouble.IsChecked = _settings.HideWindowsBanners;
+        MenuNoDouble.IsEnabled = MenuApps.IsChecked;
+        MenuSlim.IsChecked = _settings.SlimWhenIdle;
+        MenuReserve.IsChecked = _settings.ReserveTopSpace;
         MenuStartup.IsChecked = AppSettings.StartWithWindows;
     }
 
@@ -2288,8 +2387,38 @@ public partial class IslandWindow : Window
     {
         _settings.ShowAppNotifications = !_settings.ShowAppNotifications;
         _settings.Save();
-        if (_settings.ShowAppNotifications) _notifications?.Start();
-        else _notifications?.Stop();
+        if (_settings.ShowAppNotifications)
+        {
+            _notifications?.Start();
+            _banners.ApplyAll();
+        }
+        else
+        {
+            _notifications?.Stop();
+            _banners.RestoreAll(forget: false); // the island no longer shows them: Windows must again
+        }
+    }
+
+    private void MenuNoDouble_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.HideWindowsBanners = !_settings.HideWindowsBanners;
+        _settings.Save();
+        if (!_settings.HideWindowsBanners) _banners.RestoreAll(forget: true);
+    }
+
+    private void MenuSlim_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.SlimWhenIdle = !_settings.SlimWhenIdle;
+        _settings.Save();
+        ApplyState();
+    }
+
+    private void MenuReserve_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ReserveTopSpace = !_settings.ReserveTopSpace;
+        _settings.Save();
+        ApplyReservation();
+        PositionWindow();
     }
 
     private void MenuAppContent_Click(object sender, RoutedEventArgs e)
@@ -2380,13 +2509,14 @@ public partial class IslandWindow : Window
         _settings.Style = style;
         _settings.Save();
         ApplyStyle();
+        ApplyReservation(); // the notch needs a lower strip than the floating island
         ApplyState();
     }
 
     private void ApplyStyle()
     {
         bool notch = _settings.Style == IslandStyle.Notch;
-        Shape.Margin = new Thickness(0, notch ? 0 : 8, 0, 0);
+        Shape.Margin = new Thickness(0, notch ? 0 : IslandTopMargin, 0, 0);
         ShoulderLeft.Visibility = ShoulderRight.Visibility = notch ? Visibility.Visible : Visibility.Collapsed;
         IslandRim.BorderThickness = notch ? new Thickness(1.5, 0, 1.5, 1.5) : new Thickness(1.5);
         _animator.SquareTopCorners = notch;
