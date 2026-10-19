@@ -38,6 +38,21 @@ internal sealed class AppSettings
     public bool ShowLyrics { get; set; } = true;
     public bool CompactLyrics { get; set; } = true;
 
+    /// <summary>The equalizer follows the real audio (loopback) instead of a canned animation.</summary>
+    public bool LiveVisualizer { get; set; } = true;
+
+    /// <summary>Thin rim in the artwork's colour around the compact island while music plays.</summary>
+    public bool AccentRim { get; set; } = true;
+
+    /// <summary>Other apps' notifications (WhatsApp, Discord...) pop up in the island.</summary>
+    public bool ShowAppNotifications { get; set; } = true;
+
+    /// <summary>Show the message text of those notifications, or only who it is from.</summary>
+    public bool ShowNotificationContent { get; set; } = true;
+
+    /// <summary>iCal link (or .ics file) for the agenda on the "today" page; empty = none.</summary>
+    public string CalendarSource { get; set; } = "";
+
     public static AppSettings Load()
     {
         try

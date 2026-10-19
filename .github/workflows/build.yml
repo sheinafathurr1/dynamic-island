@@ -27,6 +27,12 @@ jobs:
           name: DynamicIsland-win-x64
           path: publish/DynamicIsland.exe
 
+      # CI machines have no sound card; a virtual one lets the smoke test play music and check
+      # that the equalizer follows it. Optional: without it the test just skips that check.
+      - name: Virtual audio device
+        uses: LABSN/sound-ci-helpers@v1
+        continue-on-error: true
+
       # Launches the real app on the runner's desktop, clicks through it and takes screenshots.
       - name: UI smoke test
         shell: powershell

@@ -32,6 +32,7 @@
                         <Separator />
                         <MenuItem x:Name="MenuTimerStop" Header="Hentikan timer" Click="TimerStop_Click" />
                     </MenuItem>
+                    <MenuItem x:Name="MenuCalendar" Header="Kalender (agenda)…" Click="MenuCalendar_Click" />
                     <Separator />
                     <MenuItem x:Name="MenuIsland" Header="Gaya island (melayang)" Click="MenuIsland_Click" />
                     <MenuItem x:Name="MenuNotch" Header="Gaya notch (menempel di atas)" Click="MenuNotch_Click" />
@@ -41,10 +42,16 @@
                         <MenuItem x:Name="MenuTracks" Header="Lagu baru" Click="MenuTracks_Click" />
                         <MenuItem x:Name="MenuDevices" Header="Ganti perangkat audio" Click="MenuDevices_Click" />
                         <MenuItem x:Name="MenuPrivacy" Header="Mikrofon &amp; kamera aktif" Click="MenuPrivacy_Click" />
+                        <Separator />
+                        <MenuItem x:Name="MenuApps" Header="Notifikasi aplikasi (WhatsApp, Discord…)" Click="MenuApps_Click" />
+                        <MenuItem x:Name="MenuAppContent" Header="Tampilkan isi pesan" Click="MenuAppContent_Click" />
                     </MenuItem>
-                    <MenuItem Header="Lirik">
+                    <MenuItem Header="Musik">
                         <MenuItem x:Name="MenuLyrics" Header="Tampilkan lirik (lrclib.net)" Click="MenuLyrics_Click" />
                         <MenuItem x:Name="MenuCompactLyrics" Header="Lirik di island ringkas" Click="MenuCompactLyrics_Click" />
+                        <Separator />
+                        <MenuItem x:Name="MenuVisualizer" Header="Equalizer mengikuti suara asli" Click="MenuVisualizer_Click" />
+                        <MenuItem x:Name="MenuRim" Header="Garis warna cover di pinggir island" Click="MenuRim_Click" />
                     </MenuItem>
                     <MenuItem x:Name="MenuStartup" Header="Jalankan saat Windows mulai" Click="MenuStartup_Click" />
                     <Separator />
@@ -91,9 +98,16 @@
                                 <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="11" />
                             </Border>
                             <c:ProgressRing x:Name="CompactRing" Width="18" Height="18" Margin="4,0,0,0" Thickness="2.6"
-                                            RingBrush="{StaticResource TimerBrush}" Visibility="Collapsed" />
+                                            RingBrush="{StaticResource TimerBrush}" TrackBrush="{StaticResource TimerTrackBrush}" Visibility="Collapsed" />
                         </Grid>
-                        <!-- Live lyrics: the line being sung right now -->
+                        <!-- Live lyrics: the line being sung right now; the previous one rolls up and out -->
+                        <TextBlock x:Name="CompactLyricOld" Grid.Column="1" Margin="10,0,10,0" FontSize="12.5" FontWeight="SemiBold"
+                                   TextAlignment="Center" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                   Opacity="0" Visibility="Collapsed" IsHitTestVisible="False">
+                            <TextBlock.RenderTransform>
+                                <TranslateTransform x:Name="CompactLyricOldShift" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
                         <TextBlock x:Name="CompactLyric" Grid.Column="1" Margin="10,0,10,0" FontSize="12.5" FontWeight="SemiBold"
                                    TextAlignment="Center" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                                    Visibility="Collapsed">
@@ -183,6 +197,35 @@
                                            TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
                             </StackPanel>
                             <c:EqualizerBars x:Name="TrackEq" Grid.Column="2" Margin="12,0,20,0" BarHeight="16" />
+                        </Grid>
+
+                        <!-- Another app's notification: picture (contact photo or app icon), sender, message, app name -->
+                        <Grid x:Name="NotifyPanel" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="36" Height="36" Margin="11,0,12,0" VerticalAlignment="Center">
+                                <Border x:Name="NotifyPicture" CornerRadius="10" Background="{StaticResource ArtPlaceholder}"
+                                        RenderOptions.BitmapScalingMode="HighQuality">
+                                    <Viewbox x:Name="NotifyBell" Width="17" Height="17">
+                                        <Grid Width="16" Height="16">
+                                            <Path Data="{StaticResource IconBell}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                                        </Grid>
+                                    </Viewbox>
+                                </Border>
+                                <Border x:Name="NotifyBadge" Width="17" Height="17" CornerRadius="5" Margin="0,0,-4,-3"
+                                        HorizontalAlignment="Right" VerticalAlignment="Bottom" BorderBrush="Black" BorderThickness="1.5"
+                                        RenderOptions.BitmapScalingMode="HighQuality" Visibility="Collapsed" />
+                            </Grid>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock x:Name="NotifyTitle" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="NotifyBody" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                            </StackPanel>
+                            <TextBlock x:Name="NotifyApp" Grid.Column="2" FontSize="11" Foreground="{StaticResource TertiaryText}"
+                                       MaxWidth="96" TextTrimming="CharacterEllipsis" Margin="0,0,22,0" VerticalAlignment="Center" />
                         </Grid>
 
                         <!-- Generic icon + title + subtitle: audio device, mic / camera, timer finished -->
@@ -416,17 +459,23 @@
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <Grid Width="46" Height="46" VerticalAlignment="Center">
-                                            <c:ProgressRing x:Name="TimerRing" Thickness="4" RingBrush="{StaticResource TimerBrush}" />
+                                        <!-- Glowing countdown ring; its bright head travels as time runs out -->
+                                        <Grid Width="50" Height="50" VerticalAlignment="Center">
+                                            <c:ProgressRing x:Name="TimerRing" Thickness="4.5" RingBrush="{StaticResource TimerBrush}"
+                                                            TrackBrush="{StaticResource TimerTrackBrush}" HeadBrush="White">
+                                                <c:ProgressRing.Effect>
+                                                    <DropShadowEffect x:Name="TimerGlow" ShadowDepth="0" BlurRadius="14" Opacity="0.85" Color="#FFFF9F0A" />
+                                                </c:ProgressRing.Effect>
+                                            </c:ProgressRing>
                                             <Viewbox Width="18" Height="18">
                                                 <Grid Width="16" Height="16">
-                                                    <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
+                                                    <Path x:Name="TimerIcon" Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
                                                           Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
                                                 </Grid>
                                             </Viewbox>
                                         </Grid>
                                         <StackPanel Grid.Column="1" Margin="14,0,8,0" VerticalAlignment="Center">
-                                            <TextBlock x:Name="TimerLabel" FontSize="12" Foreground="{StaticResource SecondaryText}" />
+                                            <TextBlock x:Name="TimerLabel" FontSize="12" Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis" />
                                             <TextBlock x:Name="TimerText" FontSize="30" FontWeight="SemiBold" Margin="0,-3,0,0"
                                                        Foreground="{StaticResource TimerBrush}" />
                                         </StackPanel>
@@ -448,42 +497,66 @@
                                     </Grid>
                                 </Grid>
 
-                                <!-- Page: today (clock, week strip, battery, audio output) -->
-                                <Grid x:Name="TodayPage" Width="400" Height="148" VerticalAlignment="Top">
-                                    <Grid Margin="26,18,26,0" VerticalAlignment="Top">
+                                <!-- Page: today (clock + battery + audio output, agenda card, week strip) -->
+                                <Grid x:Name="TodayPage" Width="400" Height="164" VerticalAlignment="Top">
+                                    <Grid Margin="26,16,20,0" VerticalAlignment="Top">
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="78" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="178" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock x:Name="ClockTime" FontSize="30" FontWeight="SemiBold" />
+                                                <TextBlock x:Name="ClockTime" FontSize="30" FontWeight="SemiBold" Margin="0,-4,0,0" />
                                                 <TextBlock x:Name="ClockDate" FontSize="12.5" Foreground="{StaticResource SecondaryText}" Margin="1,-2,0,0" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                <StackPanel x:Name="ClockBattery" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                    <TextBlock x:Name="ClockBatteryText" FontSize="13" FontWeight="SemiBold" Margin="0,0,8,0"
-                                                               VerticalAlignment="Center" />
-                                                    <c:BatteryIcon x:Name="ClockBatteryIcon" VerticalAlignment="Center" />
+                                                <StackPanel Orientation="Horizontal" Margin="1,6,0,0">
+                                                    <StackPanel x:Name="ClockBattery" Orientation="Horizontal" Margin="0,0,10,0">
+                                                        <c:BatteryIcon x:Name="ClockBatteryIcon" VerticalAlignment="Center">
+                                                            <c:BatteryIcon.LayoutTransform>
+                                                                <ScaleTransform ScaleX="0.8" ScaleY="0.8" />
+                                                            </c:BatteryIcon.LayoutTransform>
+                                                        </c:BatteryIcon>
+                                                        <TextBlock x:Name="ClockBatteryText" FontSize="11.5" Foreground="{StaticResource SecondaryText}"
+                                                                   Margin="5,0,0,0" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                    <StackPanel x:Name="ClockDevice" Orientation="Horizontal">
+                                                        <Viewbox Width="12" Height="12" Margin="0,0,5,0" VerticalAlignment="Center">
+                                                            <Grid Width="16" Height="16">
+                                                                <Path x:Name="ClockDeviceFill" Fill="{StaticResource SecondaryText}" />
+                                                                <Path x:Name="ClockDeviceStroke" Style="{StaticResource StrokeIcon}" Stroke="{StaticResource SecondaryText}" />
+                                                            </Grid>
+                                                        </Viewbox>
+                                                        <TextBlock x:Name="ClockDeviceText" FontSize="11.5" Foreground="{StaticResource SecondaryText}"
+                                                                   MaxWidth="96" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                    </StackPanel>
                                                 </StackPanel>
-                                                <StackPanel x:Name="ClockDevice" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,7,0,0">
-                                                    <Viewbox Width="13" Height="13" Margin="0,0,6,0" VerticalAlignment="Center">
-                                                        <Grid Width="16" Height="16">
-                                                            <Path x:Name="ClockDeviceFill" Fill="{StaticResource SecondaryText}" />
-                                                            <Path x:Name="ClockDeviceStroke" Style="{StaticResource StrokeIcon}" Stroke="{StaticResource SecondaryText}" />
-                                                        </Grid>
-                                                    </Viewbox>
-                                                    <TextBlock x:Name="ClockDeviceText" FontSize="11.5" Foreground="{StaticResource SecondaryText}"
-                                                               MaxWidth="150" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                </StackPanel>
                                             </StackPanel>
+
+                                            <!-- Agenda from an iCal link: today's and tomorrow's next events -->
+                                            <Border Grid.Column="1" CornerRadius="14" Background="{StaticResource CardBrush}" Padding="11,6,10,6">
+                                                <Grid>
+                                                    <StackPanel x:Name="AgendaList" VerticalAlignment="Center" />
+                                                    <!-- No calendar yet (or it failed): tap to set one up -->
+                                                    <Grid x:Name="AgendaHint" Background="Transparent" Tag="calendar-setup" Cursor="Hand" Visibility="Collapsed">
+                                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                            <Viewbox Width="18" Height="18" HorizontalAlignment="Center">
+                                                                <Grid Width="16" Height="16">
+                                                                    <Path Data="{StaticResource IconCalendar}" Style="{StaticResource StrokeIcon}"
+                                                                          Stroke="{StaticResource CalendarBrush}" StrokeLineJoin="Round" />
+                                                                </Grid>
+                                                            </Viewbox>
+                                                            <TextBlock x:Name="AgendaHintTitle" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,5,0,0" />
+                                                            <TextBlock x:Name="AgendaHintSubtitle" FontSize="10.5" Foreground="{StaticResource TertiaryText}" HorizontalAlignment="Center" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Grid>
+                                            </Border>
                                         </Grid>
-                                        <!-- Seven columns, filled in code (localised day names, today highlighted) -->
-                                        <UniformGrid x:Name="WeekStrip" Grid.Row="1" Rows="1" Columns="7" Margin="-6,14,-6,0" />
+                                        <!-- Seven columns, filled in code (localised day names, today highlighted, dots on busy days) -->
+                                        <UniformGrid x:Name="WeekStrip" Grid.Row="1" Rows="1" Columns="7" Margin="-6,10,-2,0" />
                                     </Grid>
                                 </Grid>
 
@@ -566,6 +639,10 @@
                         </Grid>
                         <TextBlock x:Name="HudText" Width="22" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center" />
                     </StackPanel>
+
+                    <!-- Rim in the artwork's colour around the compact island while music plays; it breathes with the beat -->
+                    <Border x:Name="IslandRim" BorderThickness="1.5" Opacity="0" IsHitTestVisible="False"
+                            CornerRadius="{Binding CornerRadius, ElementName=Island}" />
 
                 </Grid>
             </Border>

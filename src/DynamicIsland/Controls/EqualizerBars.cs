@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -7,11 +8,20 @@ using System.Windows.Shapes;
 namespace DynamicIsland.Controls;
 
 /// <summary>
-/// The little "now playing" waveform. Animates at 30 fps only while it is visible and the music is
-/// playing; otherwise it costs nothing.
+/// The little "now playing" waveform. While live it shows real levels pushed in through
+/// <see cref="SetLevels"/>; otherwise it plays a canned 30 fps loop. Either way it only moves while it
+/// is visible and the music is playing; otherwise it costs nothing.
 /// </summary>
 public sealed class EqualizerBars : StackPanel
 {
+    private enum Mode
+    {
+        Hidden,
+        Resting,
+        Looping,
+        Live,
+    }
+
     private const double RestScale = 0.28;
     private const int FrameRate = 30;
 
@@ -37,7 +47,8 @@ public sealed class EqualizerBars : StackPanel
     private readonly Rectangle[] _bars = new Rectangle[Patterns.Length];
     private readonly ScaleTransform[] _scales = new ScaleTransform[Patterns.Length];
     private bool _isPlaying;
-    private bool _animating;
+    private bool _isLive;
+    private Mode _mode = Mode.Hidden;
 
     public EqualizerBars()
     {
@@ -88,6 +99,29 @@ public sealed class EqualizerBars : StackPanel
         }
     }
 
+    /// <summary>Driven by the real audio (via <see cref="SetLevels"/>) instead of the canned loop.</summary>
+    public bool IsLive
+    {
+        get => _isLive;
+        set
+        {
+            if (_isLive == value) return;
+            _isLive = value;
+            UpdateAnimation();
+        }
+    }
+
+    /// <summary>One 0..1 level per bar, bass first. Ignored unless live, playing and visible.</summary>
+    public void SetLevels(ReadOnlySpan<float> levels)
+    {
+        if (_mode != Mode.Live) return;
+        for (int i = 0; i < _scales.Length && i < levels.Length; i++)
+            _scales[i].ScaleY = RestScale + (1 - RestScale) * levels[i];
+    }
+
+    // Lets UI Automation (and the smoke test) see whether the bars follow real audio.
+    protected override AutomationPeer OnCreateAutomationPeer() => new EqualizerPeer(this);
+
     private void ApplyBrush()
     {
         foreach (var bar in _bars) bar.Fill = BarBrush;
@@ -100,29 +134,32 @@ public sealed class EqualizerBars : StackPanel
 
     private void UpdateAnimation()
     {
-        bool animate = _isPlaying && IsVisible;
-        if (animate == _animating) return;
-        _animating = animate;
+        var mode = !IsVisible ? Mode.Hidden : !_isPlaying ? Mode.Resting : _isLive ? Mode.Live : Mode.Looping;
+        if (mode == _mode) return;
+        _mode = mode;
 
         for (int i = 0; i < _scales.Length; i++)
         {
-            if (animate)
+            switch (mode)
             {
-                _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, CreateLoop(i));
-            }
-            else if (IsVisible)
-            {
-                // Paused: settle the bars down gently (a finite animation stops ticking when done).
-                var settle = new DoubleAnimation(RestScale, TimeSpan.FromMilliseconds(260))
-                {
-                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-                };
-                _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, settle);
-            }
-            else
-            {
-                _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, null);
-                _scales[i].ScaleY = RestScale;
+                case Mode.Looping:
+                    _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, CreateLoop(i));
+                    break;
+                case Mode.Live:
+                    _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, null); // levels arrive through SetLevels
+                    break;
+                case Mode.Resting:
+                    // Paused: settle the bars down gently (a finite animation stops ticking when done).
+                    var settle = new DoubleAnimation(RestScale, TimeSpan.FromMilliseconds(260))
+                    {
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                    };
+                    _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, settle);
+                    break;
+                default:
+                    _scales[i].BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                    _scales[i].ScaleY = RestScale;
+                    break;
             }
         }
     }
@@ -148,5 +185,16 @@ public sealed class EqualizerBars : StackPanel
         Timeline.SetDesiredFrameRate(animation, FrameRate);
         animation.Freeze();
         return animation;
+    }
+
+    private sealed class EqualizerPeer(EqualizerBars owner) : FrameworkElementAutomationPeer(owner)
+    {
+        protected override string GetClassNameCore() => nameof(EqualizerBars);
+
+        protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Image;
+
+        protected override string GetNameCore() => owner._mode == Mode.Live ? "Equalizer (live)" : "Equalizer";
+
+        protected override bool IsControlElementCore() => true;
     }
 }

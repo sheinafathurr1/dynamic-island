@@ -53,6 +53,7 @@ public partial class IslandWindow : Window
         Device,
         Privacy,
         TimerDone,
+        Notification,
     }
 
     /// <summary>How long the compact "now playing" stays after pausing before the island goes idle.</summary>
@@ -67,16 +68,22 @@ public partial class IslandWindow : Window
     /// <summary>Show each lyric line a hair early so it appears together with the voice.</summary>
     private static readonly TimeSpan LyricLead = TimeSpan.FromMilliseconds(150);
 
+    /// <summary>Silence this long while "playing" (muted player, music on another output) hands the bars back to the canned loop.</summary>
+    private static readonly TimeSpan LiveAudioGrace = TimeSpan.FromSeconds(2.5);
+
     /// <summary>After a page turn, further wheel / touchpad input is ignored until it pauses this long.</summary>
     private static readonly TimeSpan ScrollLock = TimeSpan.FromMilliseconds(220);
 
     private static readonly IEasingFunction Ease = Frozen(new CubicEase { EasingMode = EasingMode.EaseOut });
+    private static readonly IEasingFunction EaseIn = Frozen(new CubicEase { EasingMode = EasingMode.EaseIn });
 
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly PowerMonitor _power = new();
     private readonly TimerService _timer = new();
     private readonly ShelfService _shelf = new();
     private readonly LyricsService _lyricsService = new();
+    private readonly AudioSpectrum _spectrum = new();
+    private readonly CalendarService _calendar = new();
     private readonly MediaService _media;
     private readonly IslandAnimator _animator;
     private readonly SpringValue _strip;
@@ -84,6 +91,8 @@ public partial class IslandWindow : Window
     private VolumeService? _volume;
     private PrivacyMonitor? _privacy;
     private ShellHooks? _shell;
+    private NotificationWatcher? _notifications;
+    private CalendarDialog? _calendarDialog;
     private nint _hwnd;
 
     private readonly DispatcherTimer _hoverTimer = new() { Interval = TimeSpan.FromMilliseconds(170) };
@@ -94,6 +103,7 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer _dropLeaveTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
     private readonly DispatcherTimer _hudTimer = new() { Interval = TimeSpan.FromMilliseconds(1300) };
     private readonly DispatcherTimer _lyricTimer = new();
+    private readonly DispatcherTimer _visualTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
     private readonly SpringValue _lyricsScroll;
     private readonly TranslateTransform _lyricsOffset = new();
 
@@ -148,6 +158,21 @@ public partial class IslandWindow : Window
     private bool _scrubbing;
     private double _scrubFraction;
 
+    // Live equalizer & rim
+    private readonly float[] _bandLevels = new float[SpectrumAnalyzer.BandCount];
+    private readonly float[] _shownLevels = new float[SpectrumAnalyzer.BandCount];
+    private bool _liveAudio;
+    private DateTime _lastAudible;
+    private bool _rimOn;
+    private double _rimFade;
+    private double _rimPhase;
+    private long _lastVisualTick;
+
+    // Notifications & agenda
+    private AppNotification? _notification;
+    private readonly Dictionary<string, (string Name, BitmapSource? Icon)> _appInfo = [];
+    private string _agendaKey = "";
+
     public IslandWindow()
     {
         InitializeComponent();
@@ -191,6 +216,7 @@ public partial class IslandWindow : Window
         };
         _hudTimer.Tick += (_, _) => HideVolumeHud();
         _lyricTimer.Tick += (_, _) => ScheduleLyricTick();
+        _visualTimer.Tick += OnVisualTick;
 
         _media.Changed += OnMediaChanged;
         _media.TrackChanged += OnTrackChanged;
@@ -201,6 +227,8 @@ public partial class IslandWindow : Window
         OnShelfChanged();
         AttachDragOut(ShelfDragAll, () => _shelf.Items.ToList(), open: null);
         Shape.MouseWheel += Shape_MouseWheel;
+        _calendar.Changed += OnCalendarChanged;
+        _calendar.SetSource(_settings.CalendarSource);
 
         Loaded += OnLoaded;
     }
@@ -235,6 +263,8 @@ public partial class IslandWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _media.Dispose();
+        _spectrum.Dispose();
+        _notifications?.Dispose();
         _volume?.Dispose();
         _privacy?.Dispose();
         _shell?.Dispose();
@@ -265,6 +295,17 @@ public partial class IslandWindow : Window
             _volume = new VolumeService(Dispatcher);
             _volume.VolumeChanged += OnVolumeChanged;
             _volume.DeviceChanged += OnAudioDeviceChanged;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+
+        try
+        {
+            _notifications = new NotificationWatcher(Dispatcher);
+            _notifications.Received += OnAppNotification;
+            if (_settings.ShowAppNotifications) _notifications.Start();
         }
         catch (Exception ex)
         {
@@ -315,6 +356,7 @@ public partial class IslandWindow : Window
             _leaveTimer.Stop();
             _expanded = false;
             Hide();
+            ConfigureVisuals();
         }
         else
         {
@@ -372,6 +414,7 @@ public partial class IslandWindow : Window
         _animator.AnimateTo(width, height, radius);
         SwitchTo(view, width, height);
         ScheduleLyricTick();
+        ConfigureVisuals();
     }
 
     private (double Width, double Height, double Radius) SizeOf(View view)
@@ -398,7 +441,7 @@ public partial class IslandWindow : Window
         Page.Lyrics => 168,
         Page.Timer => 100,
         Page.Shelf => 134,
-        _ => 148,
+        _ => 164,
     };
 
     private void SwitchTo(View view, double width, double height)
@@ -474,7 +517,7 @@ public partial class IslandWindow : Window
         CompactRing.Visibility = !media && timer ? Visibility.Visible : Visibility.Collapsed;
         CompactEq.Visibility = media && !timer ? Visibility.Visible : Visibility.Collapsed;
         CompactTimerText.Visibility = timer ? Visibility.Visible : Visibility.Collapsed;
-        CompactLyric.Visibility = ShowsCompactLyric ? Visibility.Visible : Visibility.Collapsed;
+        CompactLyric.Visibility = CompactLyricOld.Visibility = ShowsCompactLyric ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void FadeIn(FrameworkElement element)
@@ -523,9 +566,9 @@ public partial class IslandWindow : Window
         if (_activity == ActivityKind.TimerDone && kind != ActivityKind.TimerDone) return;
 
         bool switching = _activity != kind;
-        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, InfoPanel })
+        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, NotifyPanel, InfoPanel })
             candidate.Visibility = ReferenceEquals(candidate, panel) ? Visibility.Visible : Visibility.Collapsed;
-        if (switching && _view == View.Activity) FadeIn(panel);
+        if ((switching || kind == ActivityKind.Notification) && _view == View.Activity) FadeIn(panel); // a new message pops in again
 
         _activity = kind;
         _activitySize = new Size(width, height);
@@ -539,6 +582,7 @@ public partial class IslandWindow : Window
     {
         _activityTimer.Stop();
         _activity = null;
+        _notification = null;
         InfoIcon.BeginAnimation(OpacityProperty, null);
         ApplyState();
     }
@@ -805,6 +849,9 @@ public partial class IslandWindow : Window
             case "go-media":
                 GoToPage(Page.Media);
                 break;
+            case "calendar-setup":
+                OpenCalendarDialog();
+                break;
         }
     }
 
@@ -902,6 +949,7 @@ public partial class IslandWindow : Window
             var brush = Frozen(new SolidColorBrush(_accent));
             CompactEq.BarBrush = MediaEq.BarBrush = TrackEq.BarBrush = brush;
             MediaArtGlow.Color = _artSource is null ? Colors.Black : _accent; // the cover glows in its own colour
+            IslandRim.BorderBrush = RimBrush(_accent);
         }
         CompactEq.IsPlaying = MediaEq.IsPlaying = TrackEq.IsPlaying = _media.IsPlaying;
 
@@ -973,7 +1021,7 @@ public partial class IslandWindow : Window
             // Store apps: their app id launches / activates them directly.
             if (id.Contains('!'))
             {
-                Process.Start(new ProcessStartInfo("explorer.exe", $"shell:AppsFolder\\{id}") { UseShellExecute = true });
+                LaunchApp(id);
                 return;
             }
 
@@ -991,6 +1039,19 @@ public partial class IslandWindow : Window
 
             // Hidden in the tray: starting it again makes single-instance players show themselves.
             Process.Start(new ProcessStartInfo(name + ".exe") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+    }
+
+    /// <summary>Starts or activates an app by its app id, like clicking it in the Start menu.</summary>
+    private static void LaunchApp(string appId)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"shell:AppsFolder\\{appId}") { UseShellExecute = true });
         }
         catch (Exception ex)
         {
@@ -1198,14 +1259,19 @@ public partial class IslandWindow : Window
             else _lyricsScroll.AnimateTo(target, response: 0.55, dampingRatio: 0.9);
         }
 
-        // Compact island: swap the line with a quick rise-and-fade.
+        // Compact island: the old line rolls up and out while the new one rolls in from below.
         string text = index >= 0 ? lines[index].Text : "♪";
-        if (CompactLyric.Text == text) return;
+        string old = CompactLyric.Text;
+        if (old == text) return;
         CompactLyric.Text = text;
-        if (previous == -2) return;
-        var rise = TimeSpan.FromMilliseconds(260);
-        CompactLyric.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, rise));
-        CompactLyricShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(6, 0, rise) { EasingFunction = Ease });
+        if (previous == -2 || old.Length == 0) return;
+
+        CompactLyricOld.Text = old;
+        var roll = TimeSpan.FromMilliseconds(360);
+        CompactLyricOld.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(220)));
+        CompactLyricOldShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, -12, roll) { EasingFunction = EaseIn });
+        CompactLyric.BeginAnimation(OpacityProperty, DelayedEase(0, 1, 70, 260));
+        CompactLyricShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(12, 0, roll) { EasingFunction = Ease });
     }
 
     // ───────────────────────────── timer ─────────────────────────────
@@ -1244,9 +1310,26 @@ public partial class IslandWindow : Window
         // Whole seconds only, so the ring and text change (and re-render) at most once a second.
         CompactTimerText.Text = TimerText.Text = text;
         CompactRing.Progress = TimerRing.Progress = total > 0 ? Math.Clamp(seconds / total, 0, 1) : 0;
-        TimerLabel.Text = _timer.IsPaused ? "Dijeda" : $"Timer {FormatDuration(_timer.Total)}";
         TimerText.Opacity = CompactTimerText.Opacity = _timer.IsPaused ? 0.55 : 1;
         TimerPauseIcon.Data = (Geometry)FindResource(_timer.IsPaused ? "IconPlay" : "IconPause");
+
+        // "25 menit · selesai 10.24"; rounded to whole seconds so the minute never flickers.
+        var end = DateTime.Now + TimeSpan.FromSeconds(seconds);
+        TimerLabel.Text = _timer.IsPaused ? "Dijeda" : $"{FormatDuration(_timer.Total)} · selesai {end.ToString("t", CultureInfo.CurrentCulture)}";
+
+        // The last ten seconds turn red; a paused ring dims and stops glowing.
+        bool urgent = !_timer.IsPaused && seconds <= 10;
+        var accent = (SolidColorBrush)FindResource(urgent ? "WarningBrush" : "TimerBrush");
+        if (!ReferenceEquals(TimerRing.RingBrush, accent))
+        {
+            var track = (Brush)FindResource(urgent ? "WarningTrackBrush" : "TimerTrackBrush");
+            TimerRing.RingBrush = CompactRing.RingBrush = accent;
+            TimerRing.TrackBrush = CompactRing.TrackBrush = track;
+            TimerText.Foreground = CompactTimerText.Foreground = TimerIcon.Stroke = accent;
+            TimerGlow.Color = accent.Color;
+        }
+        TimerGlow.Opacity = _timer.IsPaused ? 0 : 0.85;
+        TimerRing.Opacity = _timer.IsPaused ? 0.5 : 1;
     }
 
     private void TimerPreset_Click(object sender, RoutedEventArgs e)
@@ -1316,6 +1399,7 @@ public partial class IslandWindow : Window
 
     private void OnAudioDeviceChanged(string name, bool worn)
     {
+        _spectrum.Reset(); // listen to the new output from now on
         if (_view == View.Expanded) UpdateToday();
         if (!_settings.ShowDeviceChanges || _hiddenForFullscreen) return;
 
@@ -1407,6 +1491,7 @@ public partial class IslandWindow : Window
         ClockTime.Text = now.ToString("t", culture);
         ClockDate.Text = now.ToString("dddd, d MMMM", culture);
         UpdateWeekStrip(now.Date);
+        UpdateAgenda(now);
 
         var power = _power.State;
         ClockBattery.Visibility = power.HasBattery ? Visibility.Visible : Visibility.Collapsed;
@@ -1434,6 +1519,8 @@ public partial class IslandWindow : Window
         var secondary = (Brush)FindResource("SecondaryText");
         var tertiary = (Brush)FindResource("TertiaryText");
         var highlight = (Brush)FindResource("WarningBrush");
+        var busyBrush = (Brush)FindResource("CalendarBrush");
+        var events = _calendar.EventsAround(today);
 
         int offset = ((int)today.DayOfWeek - (int)format.FirstDayOfWeek + 7) % 7;
         var start = today.AddDays(-offset);
@@ -1470,7 +1557,315 @@ public partial class IslandWindow : Window
                 Margin = new Thickness(0, 3, 0, 0),
                 Child = number,
             };
-            WeekStrip.Children.Add(new StackPanel { Children = { name, circle } });
+            // A dot under days with something in the calendar.
+            bool busy = events.Any(e => e.Start.Date <= day && (e.End > day || e.Start.Date == day));
+            var dot = new System.Windows.Shapes.Ellipse
+            {
+                Width = 4,
+                Height = 4,
+                Margin = new Thickness(0, 3, 0, 0),
+                Fill = busyBrush,
+                Opacity = busy ? 1 : 0,
+            };
+            WeekStrip.Children.Add(new StackPanel { Children = { name, circle, dot } });
+        }
+    }
+
+    /// <summary>Agenda card: what is on now / next, today and tomorrow (rebuilt at most once a minute).</summary>
+    private void UpdateAgenda(DateTime now)
+    {
+        var state = _calendar.State;
+        bool ready = state == CalendarState.Ready;
+        AgendaHint.Visibility = state is CalendarState.Off or CalendarState.Failed ? Visibility.Visible : Visibility.Collapsed;
+        AgendaList.Visibility = ready || state == CalendarState.Loading ? Visibility.Visible : Visibility.Collapsed;
+        AgendaHintTitle.Text = state == CalendarState.Failed ? "Kalender tidak bisa dimuat" : "Hubungkan kalender";
+        AgendaHintSubtitle.Text = state == CalendarState.Failed ? "Klik untuk cek link-nya" : "Agenda tampil di sini";
+
+        string key = ready ? now.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) : state.ToString();
+        if (key == _agendaKey) return;
+        _agendaKey = key;
+        AgendaList.Children.Clear();
+
+        if (state == CalendarState.Loading)
+        {
+            AgendaList.Children.Add(AgendaRow("Kalender", "Memuat agenda…", muted: true));
+            return;
+        }
+        if (!ready) return;
+
+        var today = now.Date;
+        var events = _calendar.EventsAround(today);
+        var soon = events.Where(e => e.End > now && e.Start < today.AddDays(2)).Take(2).ToList();
+        foreach (var item in soon)
+            AgendaList.Children.Add(AgendaRow(WhenLabel(item, now), item.Title, live: !item.AllDay && item.Start <= now));
+
+        if (soon.Count == 0)
+        {
+            var next = events.FirstOrDefault(e => e.Start >= today.AddDays(2));
+            AgendaList.Children.Add(next is null
+                ? AgendaRow("Hari ini & besok", "Tidak ada agenda", muted: true)
+                : AgendaRow("Berikutnya · " + next.Start.ToString("ddd d MMM", CultureInfo.CurrentCulture), next.Title, muted: true));
+        }
+    }
+
+    private static string WhenLabel(CalendarEvent item, DateTime now)
+    {
+        var culture = CultureInfo.CurrentCulture;
+        bool tomorrow = item.Start.Date > now.Date;
+        if (item.AllDay) return tomorrow ? "Besok · sepanjang hari" : "Hari ini · sepanjang hari";
+        if (item.Start <= now) return "Sekarang · s/d " + item.End.ToString("t", culture);
+        string time = item.Start.ToString("t", culture);
+        return tomorrow ? "Besok · " + time : time;
+    }
+
+    /// <summary>Coloured bar, then "when" above the title.</summary>
+    private DockPanel AgendaRow(string when, string title, bool live = false, bool muted = false)
+    {
+        var accent = (Brush)FindResource("CalendarBrush");
+        var bar = new Border
+        {
+            Width = 3,
+            CornerRadius = new CornerRadius(1.5),
+            Margin = new Thickness(0, 2, 8, 2),
+            Background = muted ? (Brush)FindResource("TrackBrush") : accent,
+        };
+        DockPanel.SetDock(bar, Dock.Left);
+        return new DockPanel
+        {
+            Margin = new Thickness(0, 2, 0, 2),
+            Children =
+            {
+                bar,
+                new StackPanel
+                {
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = when,
+                            FontSize = 10.5,
+                            FontWeight = live ? FontWeights.SemiBold : FontWeights.Normal,
+                            Foreground = live ? accent : (Brush)FindResource("SecondaryText"),
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                        },
+                        new TextBlock
+                        {
+                            Text = title.Length > 0 ? title : "(tanpa judul)",
+                            FontSize = 12.5,
+                            FontWeight = FontWeights.SemiBold,
+                            Foreground = (Brush)FindResource(muted ? "SecondaryText" : "PrimaryText"),
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                        },
+                    },
+                },
+            },
+        };
+    }
+
+    private void OnCalendarChanged()
+    {
+        _agendaKey = "";
+        _weekStripDate = default; // redraw the busy-day dots
+        if (_view == View.Expanded) UpdateToday();
+    }
+
+    private void OpenCalendarDialog()
+    {
+        if (_calendarDialog is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        var dialog = _calendarDialog = new CalendarDialog(_settings.CalendarSource ?? "");
+        dialog.Saved += source =>
+        {
+            _settings.CalendarSource = source;
+            _settings.Save();
+            _calendar.SetSource(source);
+        };
+        dialog.Closed += (_, _) => _calendarDialog = null;
+        dialog.Show();
+        dialog.Activate();
+    }
+
+    // ───────────────────────────── live equalizer & rim ─────────────────────────────
+
+    /// <summary>
+    /// The 30 fps loop behind the live equalizer and the breathing rim. Runs only while music plays
+    /// and one of them is on screen; the audio listener only while an equalizer is.
+    /// </summary>
+    private void ConfigureVisuals()
+    {
+        bool playing = _media.HasSession && _media.IsPlaying && !_hiddenForFullscreen;
+        bool equalizer = playing && (
+            (_view == View.Compact && CompactEq.Visibility == Visibility.Visible) ||
+            (_view == View.Expanded && _page == Page.Media) ||
+            (_view == View.Activity && _activity == ActivityKind.Track));
+        bool rim = playing && _settings.AccentRim && _view == View.Compact && ShowsCompactMedia && _artSource is not null;
+
+        if (equalizer && _settings.LiveVisualizer) _spectrum.Start();
+        else _spectrum.Stop();
+        if (!playing || !_settings.LiveVisualizer) SetLiveAudio(false);
+
+        SetRim(rim);
+        if (equalizer || rim)
+        {
+            if (_visualTimer.IsEnabled) return;
+            _lastVisualTick = Stopwatch.GetTimestamp();
+            _visualTimer.Start();
+        }
+        else
+        {
+            _visualTimer.Stop();
+        }
+    }
+
+    private void OnVisualTick(object? sender, EventArgs e)
+    {
+        long now = Stopwatch.GetTimestamp();
+        double dt = Math.Clamp((now - _lastVisualTick) / (double)Stopwatch.Frequency, 0, 0.1);
+        _lastVisualTick = now;
+
+        // Real audio takes over the moment it is heard; after a few silent seconds (player muted,
+        // music on another output) the bars go back to the canned loop instead of lying flat.
+        bool audible = _settings.LiveVisualizer && _spectrum.TryGetLevels(_bandLevels);
+        if (audible) _lastAudible = DateTime.UtcNow;
+        SetLiveAudio(audible || (_liveAudio && DateTime.UtcNow - _lastAudible < LiveAudioGrace));
+
+        for (int i = 0; i < _shownLevels.Length; i++)
+        {
+            float target = audible ? _bandLevels[i] : 0;
+            float rate = target > _shownLevels[i] ? 0.65f : 0.2f; // quick attack, gentle fall
+            _shownLevels[i] += (target - _shownLevels[i]) * rate;
+        }
+        if (_liveAudio)
+        {
+            CompactEq.SetLevels(_shownLevels);
+            MediaEq.SetLevels(_shownLevels);
+            TrackEq.SetLevels(_shownLevels);
+        }
+
+        if (!_rimOn) return;
+        _rimFade = Math.Min(1, _rimFade + dt / 0.4);
+        double energy;
+        if (_liveAudio)
+        {
+            energy = 0.6 * _shownLevels[0] + 0.25 * _shownLevels[1] + 0.15 * _shownLevels[2]; // mostly the kick and bass
+        }
+        else
+        {
+            _rimPhase = (_rimPhase + dt * 2 * Math.PI / 2.8) % (2 * Math.PI); // slow breathing
+            energy = 0.5 + 0.5 * Math.Sin(_rimPhase);
+        }
+        IslandRim.Opacity = _rimFade * (0.3 + 0.7 * energy);
+    }
+
+    private void SetLiveAudio(bool live)
+    {
+        if (_liveAudio == live) return;
+        _liveAudio = live;
+        CompactEq.IsLive = MediaEq.IsLive = TrackEq.IsLive = live;
+    }
+
+    private void SetRim(bool on)
+    {
+        if (_rimOn == on) return;
+        _rimOn = on;
+        if (on)
+        {
+            _rimFade = 0;
+            IslandRim.BeginAnimation(OpacityProperty, null);
+            IslandRim.Opacity = 0;
+        }
+        else
+        {
+            IslandRim.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(250)));
+        }
+    }
+
+    /// <summary>Brightest at the ends (next to the artwork and the equalizer), softer in the middle.</summary>
+    private static LinearGradientBrush RimBrush(Color accent) => Frozen(new LinearGradientBrush(
+        new GradientStopCollection
+        {
+            new(accent, 0),
+            new(Color.FromArgb(0x55, accent.R, accent.G, accent.B), 0.5),
+            new(accent, 1),
+        },
+        new Point(0, 0.5),
+        new Point(1, 0.5)));
+
+    // ───────────────────────────── app notifications ─────────────────────────────
+
+    private void OnAppNotification(AppNotification notification)
+    {
+        if (!_settings.ShowAppNotifications || _hiddenForFullscreen) return;
+
+        var (name, icon) = AppInfo(notification.AppId);
+        var picture = notification.ImagePath is { } path ? LoadPicture(path) : null;
+        var main = picture ?? icon;
+
+        NotifyTitle.Text = notification.Title;
+        NotifyBody.Text = _settings.ShowNotificationContent ? notification.Body : "Pesan baru";
+        NotifyBody.Visibility = NotifyBody.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        NotifyApp.Text = name;
+        NotifyPicture.Background = main is null ? (Brush)FindResource("ArtPlaceholder") : new ImageBrush(main) { Stretch = Stretch.UniformToFill };
+        NotifyPicture.CornerRadius = new CornerRadius(picture is not null && notification.RoundImage ? 18 : 10);
+        NotifyBell.Visibility = main is null ? Visibility.Visible : Visibility.Collapsed;
+
+        // A contact photo gets the app's icon as a small badge, like on a phone.
+        bool badge = picture is not null && icon is not null;
+        NotifyBadge.Visibility = badge ? Visibility.Visible : Visibility.Collapsed;
+        NotifyBadge.Background = badge ? new ImageBrush(icon) { Stretch = Stretch.UniformToFill } : null;
+
+        _notification = notification;
+        ShowActivity(ActivityKind.Notification, NotifyPanel, 400, 56, TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>Display name and Start-menu icon of an app, cached per app id.</summary>
+    private (string Name, BitmapSource? Icon) AppInfo(string appId)
+    {
+        if (!_appInfo.TryGetValue(appId, out var info))
+        {
+            info = (ShellThumbnail.GetAppName(appId) ?? FallbackAppName(appId), ShellThumbnail.GetAppIcon(appId, 64));
+            _appInfo[appId] = info;
+        }
+        return info;
+    }
+
+    /// <summary>"5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App" → "WhatsAppDesktop", "com.squirrel.Discord.Discord" → "Discord".</summary>
+    private static string FallbackAppName(string appId)
+    {
+        if (appId.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            return System.IO.Path.GetFileNameWithoutExtension(appId.Replace('/', '\\').Split('\\')[^1]);
+        string id = appId;
+        int bang = id.IndexOf('!');
+        if (bang > 0)
+        {
+            id = id[..bang];
+            int underscore = id.LastIndexOf('_');
+            if (underscore > 0) id = id[..underscore];
+        }
+        return id.Split('.', '\\', '/').LastOrDefault(p => p.Length > 0) ?? appId;
+    }
+
+    private static BitmapSource? LoadPicture(string path)
+    {
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.UriSource = new Uri(path);
+            image.DecodePixelWidth = 72;
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch (Exception)
+        {
+            return null; // deleted already, or not an image
         }
     }
 
@@ -1813,12 +2208,24 @@ public partial class IslandWindow : Window
     private void Shape_MouseEnter(object sender, MouseEventArgs e)
     {
         _leaveTimer.Stop();
+
+        // Reading a notification: keep it up and don't open the island underneath the pointer.
+        if (_activity == ActivityKind.Notification)
+        {
+            _activityTimer.Stop();
+            return;
+        }
         if (!_expanded) _hoverTimer.Start();
     }
 
     private void Shape_MouseLeave(object sender, MouseEventArgs e)
     {
         _hoverTimer.Stop();
+        if (_activity == ActivityKind.Notification)
+        {
+            _activityTimer.Interval = TimeSpan.FromSeconds(2);
+            _activityTimer.Start();
+        }
         if (_expanded && !_pointerDown && !_draggingOut) StartLeaveTimer(TimeSpan.FromMilliseconds(320));
     }
 
@@ -1840,6 +2247,14 @@ public partial class IslandWindow : Window
             return;
         }
 
+        // Clicking a notification opens the app it came from.
+        if (_activity == ActivityKind.Notification && _notification is { } notification)
+        {
+            EndActivity();
+            LaunchApp(notification.AppId);
+            return;
+        }
+
         // Otherwise a click expands right away (handy for touch screens and pens).
         SetExpanded(true);
     }
@@ -1858,7 +2273,43 @@ public partial class IslandWindow : Window
         MenuLyrics.IsChecked = _settings.ShowLyrics;
         MenuCompactLyrics.IsChecked = _settings.CompactLyrics;
         MenuCompactLyrics.IsEnabled = _settings.ShowLyrics;
+        MenuVisualizer.IsChecked = _settings.LiveVisualizer;
+        MenuRim.IsChecked = _settings.AccentRim;
+        MenuApps.IsChecked = _settings.ShowAppNotifications && NotificationWatcher.IsSupported;
+        MenuApps.IsEnabled = NotificationWatcher.IsSupported;
+        MenuAppContent.IsChecked = _settings.ShowNotificationContent;
+        MenuAppContent.IsEnabled = MenuApps.IsChecked;
         MenuStartup.IsChecked = AppSettings.StartWithWindows;
+    }
+
+    private void MenuCalendar_Click(object sender, RoutedEventArgs e) => OpenCalendarDialog();
+
+    private void MenuApps_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowAppNotifications = !_settings.ShowAppNotifications;
+        _settings.Save();
+        if (_settings.ShowAppNotifications) _notifications?.Start();
+        else _notifications?.Stop();
+    }
+
+    private void MenuAppContent_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowNotificationContent = !_settings.ShowNotificationContent;
+        _settings.Save();
+    }
+
+    private void MenuVisualizer_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.LiveVisualizer = !_settings.LiveVisualizer;
+        _settings.Save();
+        ConfigureVisuals();
+    }
+
+    private void MenuRim_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.AccentRim = !_settings.AccentRim;
+        _settings.Save();
+        ConfigureVisuals();
     }
 
     private void MenuIsland_Click(object sender, RoutedEventArgs e) => SetStyle(IslandStyle.Island);
@@ -1937,6 +2388,7 @@ public partial class IslandWindow : Window
         bool notch = _settings.Style == IslandStyle.Notch;
         Shape.Margin = new Thickness(0, notch ? 0 : 8, 0, 0);
         ShoulderLeft.Visibility = ShoulderRight.Visibility = notch ? Visibility.Visible : Visibility.Collapsed;
+        IslandRim.BorderThickness = notch ? new Thickness(1.5, 0, 1.5, 1.5) : new Thickness(1.5);
         _animator.SquareTopCorners = notch;
     }
 

@@ -2,8 +2,8 @@ using System.Runtime.InteropServices;
 
 namespace DynamicIsland.Interop;
 
-// Minimal Core Audio (MMDevice API) definitions — just enough to watch the master volume and
-// the default output device.
+// Minimal Core Audio (MMDevice API + WASAPI) definitions — just enough to watch the master volume and
+// the default output device, and to listen in on what it plays (loopback) for the visualizer.
 // Vtable order matters: methods must be declared exactly in the native order.
 
 internal static class CoreAudio
@@ -14,6 +14,15 @@ internal static class CoreAudio
     public const int STGM_READ = 0;
     public const ushort VT_UI4 = 19;
     public const ushort VT_LPWSTR = 31;
+
+    public const int AUDCLNT_SHAREMODE_SHARED = 0;
+    public const int AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000;
+    public const uint AUDCLNT_BUFFERFLAGS_SILENT = 0x2;
+    public const ushort WAVE_FORMAT_PCM = 1;
+    public const ushort WAVE_FORMAT_IEEE_FLOAT = 3;
+    public const ushort WAVE_FORMAT_EXTENSIBLE = 0xFFFE;
+    public static readonly Guid KSDATAFORMAT_SUBTYPE_PCM = new("00000001-0000-0010-8000-00AA00389B71");
+    public static readonly Guid KSDATAFORMAT_SUBTYPE_IEEE_FLOAT = new("00000003-0000-0010-8000-00AA00389B71");
 
     // EndpointFormFactor values that mean "something on your head".
     public const uint FormFactorHeadphones = 3;
@@ -79,6 +88,31 @@ internal interface IAudioEndpointVolume
     [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
     [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
     [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+}
+
+[ComImport, Guid("1CB9AD4C-DBFA-4C32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioClient
+{
+    [PreserveSig] int Initialize(int shareMode, int streamFlags, long bufferDuration, long periodicity, nint format, nint audioSessionGuid);
+    [PreserveSig] int GetBufferSize(out uint frames);
+    [PreserveSig] int GetStreamLatency(out long latency);
+    [PreserveSig] int GetCurrentPadding(out uint frames);
+    [PreserveSig] int IsFormatSupported(int shareMode, nint format, out nint closestMatch);
+    [PreserveSig] int GetMixFormat(out nint format);
+    [PreserveSig] int GetDevicePeriod(out long defaultPeriod, out long minimumPeriod);
+    [PreserveSig] int Start();
+    [PreserveSig] int Stop();
+    [PreserveSig] int Reset();
+    [PreserveSig] int SetEventHandle(nint eventHandle);
+    [PreserveSig] int GetService(ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object? service);
+}
+
+[ComImport, Guid("C8ADBD64-E71E-48A0-A4DE-185C395CD317"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioCaptureClient
+{
+    [PreserveSig] int GetBuffer(out nint data, out uint frames, out uint flags, out ulong devicePosition, out ulong qpcPosition);
+    [PreserveSig] int ReleaseBuffer(uint frames);
+    [PreserveSig] int GetNextPacketSize(out uint frames);
 }
 
 [ComImport, Guid("657804FA-D6AD-4496-8A60-352752AF4F89"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

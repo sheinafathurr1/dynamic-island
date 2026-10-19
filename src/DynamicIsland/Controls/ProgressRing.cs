@@ -20,6 +20,14 @@ public sealed class ProgressRing : FrameworkElement
         nameof(RingBrush), typeof(Brush), typeof(ProgressRing),
         new FrameworkPropertyMetadata(Brushes.White, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty TrackBrushProperty = DependencyProperty.Register(
+        nameof(TrackBrush), typeof(Brush), typeof(ProgressRing),
+        new FrameworkPropertyMetadata(DefaultTrack, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty HeadBrushProperty = DependencyProperty.Register(
+        nameof(HeadBrush), typeof(Brush), typeof(ProgressRing),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
     /// <summary>Fraction of the ring that is drawn, 0..1.</summary>
     public double Progress
     {
@@ -39,6 +47,20 @@ public sealed class ProgressRing : FrameworkElement
         set => SetValue(RingBrushProperty, value);
     }
 
+    /// <summary>The unfilled part of the ring.</summary>
+    public Brush TrackBrush
+    {
+        get => (Brush)GetValue(TrackBrushProperty);
+        set => SetValue(TrackBrushProperty, value);
+    }
+
+    /// <summary>Optional bright dot at the moving end of the arc (null = none).</summary>
+    public Brush? HeadBrush
+    {
+        get => (Brush?)GetValue(HeadBrushProperty);
+        set => SetValue(HeadBrushProperty, value);
+    }
+
     protected override void OnRender(DrawingContext dc)
     {
         double size = Math.Min(ActualWidth, ActualHeight);
@@ -47,21 +69,22 @@ public sealed class ProgressRing : FrameworkElement
         double thickness = Thickness;
         double radius = (size - thickness) / 2;
         var center = new Point(ActualWidth / 2, ActualHeight / 2);
-        dc.DrawEllipse(null, new Pen(DefaultTrack, thickness), center, radius, radius);
+        dc.DrawEllipse(null, new Pen(TrackBrush, thickness), center, radius, radius);
 
         double progress = Math.Clamp(Progress, 0, 1);
         if (progress <= 0) return;
 
         var pen = new Pen(RingBrush, thickness) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round };
-        if (progress >= 0.9999)
-        {
-            dc.DrawEllipse(null, pen, center, radius, radius);
-            return;
-        }
-
         double angle = progress * 2 * Math.PI;
         var start = new Point(center.X, center.Y - radius);
         var end = new Point(center.X + radius * Math.Sin(angle), center.Y - radius * Math.Cos(angle));
+
+        if (progress >= 0.9999)
+        {
+            dc.DrawEllipse(null, pen, center, radius, radius);
+            DrawHead(dc, start, thickness);
+            return;
+        }
 
         var arc = new StreamGeometry();
         using (var context = arc.Open())
@@ -71,6 +94,12 @@ public sealed class ProgressRing : FrameworkElement
         }
         arc.Freeze();
         dc.DrawGeometry(null, pen, arc);
+        DrawHead(dc, end, thickness);
+    }
+
+    private void DrawHead(DrawingContext dc, Point at, double thickness)
+    {
+        if (HeadBrush is { } head) dc.DrawEllipse(head, null, at, thickness * 0.3, thickness * 0.3);
     }
 
     private static T Frozen<T>(T freezable) where T : Freezable

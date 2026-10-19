@@ -4,6 +4,8 @@
   Starts the app, drives it with the mouse, OLE drag & drop and UI Automation, and saves screenshots
   of every state to $OutDir. Fails when the app crashes, a control cannot be found, a drop does not
   land on the shelf, or the app does not exit cleanly.
+  Checks that depend on the runner (a sound card for the live equalizer, Windows' notification
+  service for app notifications) are reported but do not fail the run.
   With -EmitBase64 the screenshots are also written to the log, inside collapsed groups.
 #>
 param(
@@ -59,6 +61,51 @@ public static class SmokeInput
 }
 "@
 Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition $helperSource
+
+# A few bars of made-up music (kick, snare, hi-hat, bass line, chords) for the live equalizer.
+Add-Type -TypeDefinition @"
+using System;
+using System.IO;
+public static class TestSong
+{
+    public static void Write(string path, int seconds)
+    {
+        const int rate = 44100;
+        int frames = rate * seconds;
+        var random = new Random(7);
+        double[] bass = { 55.0, 43.65, 65.41, 49.0 };
+        double[][] chords = { new[] { 220.0, 261.63, 329.63 }, new[] { 174.61, 220.0, 261.63 }, new[] { 261.63, 329.63, 392.0 }, new[] { 196.0, 246.94, 293.66 } };
+        using (var writer = new BinaryWriter(File.Create(path)))
+        {
+            writer.Write(new[] { 'R', 'I', 'F', 'F' }); writer.Write(36 + frames * 4);
+            writer.Write(new[] { 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ' }); writer.Write(16);
+            writer.Write((short)1); writer.Write((short)2); writer.Write(rate); writer.Write(rate * 4); writer.Write((short)4); writer.Write((short)16);
+            writer.Write(new[] { 'd', 'a', 't', 'a' }); writer.Write(frames * 4);
+            double hat = 0, previousNoise = 0;
+            for (int i = 0; i < frames; i++)
+            {
+                double t = (double)i / rate;
+                double beat = t % 0.5, half = t % 0.25, bar = t % 2.0;
+                int chord = (int)(t / 2.0) % 4;
+                double kick = Math.Sin(2 * Math.PI * (45 + 75 * Math.Exp(-beat / 0.03)) * beat) * Math.Exp(-beat / 0.12) * 0.9;
+                double noise = random.NextDouble() * 2 - 1;
+                double snareTime = (t + 0.5) % 1.0;
+                double snare = (noise * 0.6 + Math.Sin(2 * Math.PI * 185 * snareTime) * 0.4) * Math.Exp(-snareTime / 0.09) * 0.5;
+                hat = (noise - previousNoise) * 0.5; previousNoise = noise;
+                double hats = half > 0.125 ? hat * Math.Exp(-(half - 0.125) / 0.025) * 0.35 : 0;
+                double note = bass[chord] * ((int)(bar / 0.25) % 2 == 0 ? 1 : 2);
+                double bassLine = Math.Sin(2 * Math.PI * note * t) * Math.Exp(-(t % 0.25) / 0.2) * 0.35;
+                double pad = 0;
+                foreach (double frequency in chords[chord]) pad += Math.Sin(2 * Math.PI * frequency * t);
+                pad *= 0.06 * Math.Min(1, bar / 0.3) * (0.6 + 0.4 * Math.Sin(2 * Math.PI * t / 8));
+                double sample = Math.Tanh((kick + snare + hats + bassLine + pad) * 0.9) * 0.8;
+                short value = (short)(sample * 32767);
+                writer.Write(value); writer.Write(value);
+            }
+        }
+    }
+}
+"@
 
 [SmokeInput]::SetProcessDPIAware() | Out-Null
 
@@ -129,6 +176,21 @@ function Expand-ByName([string]$Name) {
 }
 
 function Move-Away { [SmokeInput]::SetCursorPos($centerX, [int]($screen.Height / 2)) | Out-Null }
+
+# Screenshot of a region centred on the screen (dialogs open there).
+function Save-CenterShot([string]$Name, [int]$Width, [int]$Height) {
+    $x = [int]($screen.Left + ($screen.Width - $Width) / 2)
+    $y = [int]($screen.Top + ($screen.Height - $Height) / 2)
+    $bitmap = [SmokeInput]::Capture($x, $y, $Width, $Height)
+    $bitmap.Save((Join-Path $OutDir "$Name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Dispose()
+    Emit-Shot $Name
+}
+
+# Like Find-ByName, but for checks that depend on the runner: $null instead of failing.
+function Try-FindByName([string]$Name, [int]$TimeoutSeconds = 6) {
+    try { return Find-ByName $Name $TimeoutSeconds } catch { return $null }
+}
 
 # ── Test files: two already on the shelf, one to drag in later ─────────────────────────────────
 $files = Join-Path $env:TEMP "island-test"
@@ -281,10 +343,15 @@ Expand-ByName "Timer"
 Start-Sleep -Milliseconds 1000
 Save-Shot "13-submenu" 900 560
 
-# 1-minute timer from the submenu, then wait for the alarm.
+# 1-minute timer from the submenu; peek at the last seconds (the ring turns red), then wait for the alarm.
 Invoke-ByName "1 menit"
 Move-Away
-Start-Sleep -Seconds 63
+Start-Sleep -Seconds 51
+[SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
+Start-Sleep -Milliseconds 1500
+Save-Shot "13b-timer-last-seconds"
+Move-Away
+Start-Sleep -Seconds 12
 Assert-Running
 Save-Shot "14-timer-done"
 
@@ -403,6 +470,133 @@ Assert-Running
 Save-Shot "20-lyrics-page"
 Move-Away
 Start-Sleep -Milliseconds 1500
+
+# ── Live equalizer: play real music on the (virtual) sound card ─────────────────────────────────
+Get-CimInstance Win32_SoundDevice | ForEach-Object { Write-Host "Sound device: $($_.Name) ($($_.Status))" }
+$song = Join-Path $files "test-song.wav"
+[TestSong]::Write($song, 20)
+$sound = $null
+try {
+    $sound = New-Object System.Media.SoundPlayer $song
+    $sound.PlayLooping()
+} catch {
+    Write-Host "Could not play the test song: $_"
+}
+Start-Sleep -Seconds 3
+Assert-Running
+Save-Shot "21-compact-live"
+Start-Sleep -Milliseconds 400
+Save-Shot "21b-compact-live"
+if (Try-FindByName "Equalizer (live)") { Write-Host "Equalizer: follows the real audio" }
+else { Write-Host "Equalizer: canned animation (no audio heard on this runner)" }
+
+# ── App notification: a real toast, like WhatsApp would send ───────────────────────────────────
+$avatar = Join-Path $files "avatar.png"
+$face = New-Object System.Drawing.Bitmap 128, 128
+$graphics = [System.Drawing.Graphics]::FromImage($face)
+$graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+$graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
+$warm = New-Object System.Drawing.Drawing2D.LinearGradientBrush (New-Object System.Drawing.Rectangle 0, 0, 128, 128), ([System.Drawing.Color]::FromArgb(255, 255, 140, 90)), ([System.Drawing.Color]::FromArgb(255, 220, 60, 130)), 45
+$graphics.FillRectangle($warm, 0, 0, 128, 128)
+$font = New-Object System.Drawing.Font "Segoe UI Semibold", 54
+$format = New-Object System.Drawing.StringFormat
+$format.Alignment = [System.Drawing.StringAlignment]::Center
+$format.LineAlignment = [System.Drawing.StringAlignment]::Center
+$graphics.DrawString("R", $font, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF 0, 0, 128, 128), $format)
+$graphics.Dispose(); $face.Save($avatar, [System.Drawing.Imaging.ImageFormat]::Png); $face.Dispose()
+
+Write-Host "Notification database present: $(Test-Path (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Notifications\wpndatabase.db'))"
+try {
+    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+    [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+    $toastXml = [Windows.Data.Xml.Dom.XmlDocument]::new()
+    $toastXml.LoadXml(@"
+<toast><visual><binding template="ToastGeneric">
+  <text>Rina</text>
+  <text>Jadi rapat jam 3 nanti? Aku bawa laptopnya ya</text>
+  <image placement="appLogoOverride" hint-crop="circle" src="$([Uri]::new($avatar).AbsoluteUri)"/>
+</binding></visual></toast>
+"@)
+    $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe')
+    $notifier.Show([Windows.UI.Notifications.ToastNotification]::new($toastXml))
+    Write-Host "Toast sent"
+} catch {
+    Write-Host "Could not send a toast: $_"
+}
+if (Try-FindByName "Rina" 8) {
+    Start-Sleep -Milliseconds 700
+    Save-Shot "22-notification"
+    Write-Host "Notification: shown in the island"
+} else {
+    Save-Shot "22-notification"
+    Write-Host "Notification: not shown (no notification service on this runner?)"
+}
+Move-Away
+Start-Sleep -Seconds 6
+Assert-Running
+
+# ── Calendar: paste an iCal feed in the dialog, then look at the agenda ────────────────────────
+$now = Get-Date
+function Ics-Time($date) { $date.ToString("yyyyMMdd'T'HHmmss") }
+$yogaDay = @("SU", "MO", "TU", "WE", "TH", "FR", "SA")[[int]$now.AddDays(2).DayOfWeek]
+$calendarFile = Join-Path $files "agenda.ics"
+@"
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Dynamic Island//Smoke test//ID
+BEGIN:VEVENT
+UID:standup@test
+DTSTART:$(Ics-Time $now.AddMinutes(-20))
+DTEND:$(Ics-Time $now.AddMinutes(25))
+SUMMARY:Rapat tim mingguan
+END:VEVENT
+BEGIN:VEVENT
+UID:lunch@test
+DTSTART:$(Ics-Time $now.AddHours(2))
+DTEND:$(Ics-Time $now.AddHours(3))
+SUMMARY:Makan siang bareng Rina
+END:VEVENT
+BEGIN:VEVENT
+UID:birthday@test
+DTSTART;VALUE=DATE:$($now.AddDays(1).ToString("yyyyMMdd"))
+DTEND;VALUE=DATE:$($now.AddDays(2).ToString("yyyyMMdd"))
+SUMMARY:Ulang tahun Budi
+END:VEVENT
+BEGIN:VEVENT
+UID:yoga@test
+DTSTART:$(Ics-Time $now.Date.AddDays(-19).AddHours(19))
+DURATION:PT1H
+RRULE:FREQ=WEEKLY;BYDAY=$yogaDay
+SUMMARY:Kelas yoga
+END:VEVENT
+END:VCALENDAR
+"@ | Set-Content -Path $calendarFile -Encoding UTF8
+
+[SmokeInput]::RightClick($centerX, $islandY)
+Start-Sleep -Milliseconds 1000
+Invoke-ByName ("Kalender (agenda)" + [char]0x2026)   # the script is read as ANSI by Windows PowerShell: no literal ellipsis
+Start-Sleep -Milliseconds 1500
+$box = Find-ByName "Link iCal"
+$box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($calendarFile)
+Start-Sleep -Milliseconds 500
+Save-CenterShot "23-calendar-dialog" 620 560
+Invoke-ByName "Simpan"
+Start-Sleep -Milliseconds 1500
+$settingsJson = Get-Content (Join-Path $dataDir "settings.json") -Raw | ConvertFrom-Json
+if ($settingsJson.CalendarSource -ne $calendarFile) { throw "Calendar link was not saved: '$($settingsJson.CalendarSource)'" }
+
+# Open the island and scroll to "today": music, lyrics, timer, today.
+[SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
+Start-Sleep -Milliseconds 1500
+foreach ($i in 1..3) { [SmokeInput]::Wheel(-120); Start-Sleep -Milliseconds 900 }
+Start-Sleep -Milliseconds 800
+Assert-Running
+Save-Shot "24-today-agenda"
+if (-not (Try-FindByName "Rapat tim mingguan")) { throw "The agenda does not show the calendar's current event" }
+Write-Host "Agenda: shows the calendar"
+Move-Away
+Start-Sleep -Milliseconds 1500
+if ($sound) { $sound.Stop() }
 
 # Switch to the notch style.
 [SmokeInput]::RightClick($centerX, $islandY)

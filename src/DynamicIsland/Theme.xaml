@@ -16,6 +16,10 @@
     <SolidColorBrush x:Key="MicBrush" Color="#FFFF9F0A" />
     <SolidColorBrush x:Key="CameraBrush" Color="#FF30D158" />
     <SolidColorBrush x:Key="DividerBrush" Color="#1AFFFFFF" />
+    <SolidColorBrush x:Key="CalendarBrush" Color="#FF0A84FF" />
+    <SolidColorBrush x:Key="CardBrush" Color="#14FFFFFF" />
+    <SolidColorBrush x:Key="TimerTrackBrush" Color="#38FF9F0A" />
+    <SolidColorBrush x:Key="WarningTrackBrush" Color="#38FF453A" />
     <SolidColorBrush x:Key="MenuBackground" Color="#F21C1C1E" />
     <SolidColorBrush x:Key="MenuBorder" Color="#24FFFFFF" />
     <SolidColorBrush x:Key="MenuHighlight" Color="#22FFFFFF" />
@@ -54,6 +58,11 @@
     <!-- Arrow out of a box: open the player app -->
     <StreamGeometry x:Key="IconOpenApp">M9.5,2 L14,2 L14,6.5 M14,2 L7.5,8.5 M12,9.5 L12,12.6 A1.4,1.4 0 0 1 10.6,14 L3.4,14 A1.4,1.4 0 0 1 2,12.6 L2,5.4 A1.4,1.4 0 0 1 3.4,4 L6.5,4</StreamGeometry>
 
+    <!-- Calendar page with two rings -->
+    <StreamGeometry x:Key="IconCalendar">M3.2,3.2 L12.8,3.2 A1.7,1.7 0 0 1 14.5,4.9 L14.5,12.8 A1.7,1.7 0 0 1 12.8,14.5 L3.2,14.5 A1.7,1.7 0 0 1 1.5,12.8 L1.5,4.9 A1.7,1.7 0 0 1 3.2,3.2 Z M1.5,6.9 L14.5,6.9 M5,1.5 L5,4.4 M11,1.5 L11,4.4</StreamGeometry>
+    <!-- Bell: an app notification without a picture -->
+    <StreamGeometry x:Key="IconBell">M8,1.8 A4.2,4.2 0 0 1 12.2,6 L12.2,9.2 L13.8,11.6 L2.2,11.6 L3.8,9.2 L3.8,6 A4.2,4.2 0 0 1 8,1.8 Z M6.3,13.4 A1.8,1.8 0 0 0 9.7,13.4</StreamGeometry>
+
     <!-- Inbox tray: the file shelf -->
     <StreamGeometry x:Key="IconTray">M2,9.2 L4.4,3 L11.6,3 L14,9.2 L14,13 L2,13 Z M2,9.2 L5.4,9.2 L6.4,10.9 L9.6,10.9 L10.6,9.2 L14,9.2</StreamGeometry>
     <StreamGeometry x:Key="IconHeadphoneBand">M2.4,10.5 L2.4,8.2 A5.6,5.6 0 0 1 13.6,8.2 L13.6,10.5</StreamGeometry>
@@ -91,9 +100,10 @@
         <Setter Property="StrokeLineJoin" Value="Round" />
     </Style>
 
-    <!-- Rounded text button: timer chips, "+1 mnt" -->
+    <!-- Rounded text button: timer chips, "+1 mnt" (set Background for a coloured one) -->
     <Style x:Key="PillButton" TargetType="Button">
         <Setter Property="Foreground" Value="White" />
+        <Setter Property="Background" Value="#1FFFFFFF" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Padding" Value="12,5" />
@@ -102,13 +112,14 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border x:Name="Chrome" Background="#1FFFFFFF" CornerRadius="999" Padding="{TemplateBinding Padding}"
-                            RenderTransformOrigin="0.5,0.5">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
+                    <Grid x:Name="Chrome" RenderTransformOrigin="0.5,0.5">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="999" />
+                        <Border x:Name="Hover" Background="#1FFFFFFF" CornerRadius="999" Opacity="0" />
+                        <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Chrome" Property="Background" Value="#33FFFFFF" />
+                            <Setter TargetName="Hover" Property="Opacity" Value="1" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Chrome" Property="RenderTransform">
