@@ -14,7 +14,9 @@
         <StackPanel x:Name="Shape" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Top"
                     Margin="0,8,0,0"
                     MouseEnter="Shape_MouseEnter" MouseLeave="Shape_MouseLeave"
-                    MouseLeftButtonUp="Shape_MouseLeftButtonUp">
+                    MouseLeftButtonUp="Shape_MouseLeftButtonUp" MouseDown="Shape_MouseDown"
+                    AllowDrop="True" DragEnter="Shape_DragOver" DragOver="Shape_DragOver"
+                    DragLeave="Shape_DragLeave" Drop="Shape_Drop">
             <StackPanel.ContextMenu>
                 <ContextMenu Opened="Menu_Opened">
                     <MenuItem Header="Dynamic Island" IsEnabled="False" />
@@ -56,6 +58,18 @@
                     <!-- Idle: empty pill, plus the mic / camera dots when they are in use -->
                     <Grid x:Name="IdleView" VerticalAlignment="Top" Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <StackPanel x:Name="IdleShelfBadge" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,5,0"
+                                        Background="Transparent" Cursor="Hand" Visibility="Collapsed"
+                                        MouseLeftButtonUp="ShelfBadge_MouseLeftButtonUp">
+                                <Viewbox Width="12" Height="12" VerticalAlignment="Center">
+                                    <Grid Width="16" Height="16">
+                                        <Path Data="{StaticResource IconTray}" Style="{StaticResource StrokeIcon}" StrokeThickness="1.7"
+                                              StrokeLineJoin="Round" Stroke="{StaticResource SecondaryText}" />
+                                    </Grid>
+                                </Viewbox>
+                                <TextBlock x:Name="IdleShelfCount" FontSize="11" FontWeight="SemiBold" Margin="4,0,0,0"
+                                           VerticalAlignment="Center" Foreground="{StaticResource SecondaryText}" />
+                            </StackPanel>
                             <Ellipse x:Name="IdleMicDot" Width="6" Height="6" Margin="3,0" Fill="{StaticResource MicBrush}" Visibility="Collapsed" />
                             <Ellipse x:Name="IdleCameraDot" Width="6" Height="6" Margin="3,0" Fill="{StaticResource CameraBrush}" Visibility="Collapsed" />
                         </StackPanel>
@@ -71,6 +85,18 @@
                                             RingBrush="{StaticResource TimerBrush}" Visibility="Collapsed" />
                         </Grid>
                         <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Margin="0,0,13,0">
+                            <StackPanel x:Name="CompactShelfBadge" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,9,0"
+                                        Background="Transparent" Cursor="Hand" Visibility="Collapsed"
+                                        MouseLeftButtonUp="ShelfBadge_MouseLeftButtonUp">
+                                <Viewbox Width="12" Height="12" VerticalAlignment="Center">
+                                    <Grid Width="16" Height="16">
+                                        <Path Data="{StaticResource IconTray}" Style="{StaticResource StrokeIcon}" StrokeThickness="1.7"
+                                              StrokeLineJoin="Round" Stroke="{StaticResource SecondaryText}" />
+                                    </Grid>
+                                </Viewbox>
+                                <TextBlock x:Name="CompactShelfCount" FontSize="11" FontWeight="SemiBold" Margin="4,0,0,0"
+                                           VerticalAlignment="Center" Foreground="{StaticResource SecondaryText}" />
+                            </StackPanel>
                             <Ellipse x:Name="CompactMicDot" Width="6" Height="6" Margin="0,0,7,0" VerticalAlignment="Center"
                                      Fill="{StaticResource MicBrush}" Visibility="Collapsed" />
                             <Ellipse x:Name="CompactCameraDot" Width="6" Height="6" Margin="0,0,7,0" VerticalAlignment="Center"
@@ -344,6 +370,57 @@
                                     </Grid>
                                 </Grid>
 
+
+                                <!-- Page: file shelf ("titipan"), like NotchDrop -->
+                                <Grid x:Name="ShelfPage" Width="400" Height="128" VerticalAlignment="Top">
+                                    <Grid x:Name="ShelfContent" Margin="22,16,22,0" VerticalAlignment="Top">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Orientation="Horizontal">
+                                                <!-- Drag this icon to take every file at once -->
+                                                <Border x:Name="ShelfDragAll" Background="Transparent" Cursor="SizeAll" Padding="2"
+                                                        ToolTip="Seret untuk membawa semua file">
+                                                    <Viewbox Width="17" Height="17">
+                                                        <Grid Width="16" Height="16">
+                                                            <Path Data="{StaticResource IconTray}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                                                        </Grid>
+                                                    </Viewbox>
+                                                </Border>
+                                                <TextBlock Text="Titipan" FontSize="15" FontWeight="SemiBold" Margin="7,0,0,0" VerticalAlignment="Center" />
+                                                <TextBlock x:Name="ShelfCount" FontSize="13" Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Bersihkan" Padding="11,4"
+                                                    Click="ShelfClear_Click" />
+                                        </Grid>
+                                        <!-- Tiles are built in code: thumbnail + name, drag out, click to open, × to remove -->
+                                        <StackPanel x:Name="ShelfTiles" Grid.Row="1" Orientation="Horizontal" Margin="-4,10,0,0" />
+                                    </Grid>
+
+                                    <!-- Drop zone: while files are dragged over the island, or when the shelf is empty -->
+                                    <Grid x:Name="ShelfDropZone" Height="98" VerticalAlignment="Top" Margin="16,14,16,0" Visibility="Collapsed">
+                                        <Rectangle x:Name="ShelfDropOutline" RadiusX="18" RadiusY="18" Fill="#E6000000"
+                                                   Stroke="{StaticResource SecondaryText}" StrokeThickness="1.5" StrokeDashArray="4 3" />
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <Viewbox Width="24" Height="24">
+                                                <Grid Width="16" Height="16">
+                                                    <Path Data="{StaticResource IconTray}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" StrokeThickness="1.3" />
+                                                </Grid>
+                                            </Viewbox>
+                                            <TextBlock x:Name="ShelfDropTitle" Text="Lepaskan untuk menitip file" FontSize="13" FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center" Margin="0,8,0,0" />
+                                            <TextBlock Text="File tetap di tempat aslinya" FontSize="11" Foreground="{StaticResource TertiaryText}"
+                                                       HorizontalAlignment="Center" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+
                             </StackPanel>
                         </Canvas>
                     </Grid>
@@ -351,6 +428,27 @@
                     <!-- Pagination dots, pinned to the island's (animated) bottom edge -->
                     <StackPanel x:Name="PageDots" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom"
                                 Margin="0,0,0,4" Opacity="0" IsHitTestVisible="False" />
+
+                    <!-- Volume feedback while the island is open: takes the dots' place for a moment -->
+                    <StackPanel x:Name="VolumeHud" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                Margin="0,0,0,7" Opacity="0" IsHitTestVisible="False">
+                        <Viewbox Width="12" Height="12" VerticalAlignment="Center">
+                            <Grid Width="16" Height="16">
+                                <Path Data="{StaticResource IconSpeaker}" Style="{StaticResource SolidIcon}" StrokeThickness="1" />
+                                <Path x:Name="HudWaves" Data="{StaticResource IconSpeakerWaves}" Style="{StaticResource StrokeIcon}" />
+                                <Path x:Name="HudMute" Data="{StaticResource IconMute}" Style="{StaticResource StrokeIcon}" Visibility="Collapsed" />
+                            </Grid>
+                        </Viewbox>
+                        <Grid Width="110" Height="4" Margin="8,0" VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="HudDone" Width="0.5*" />
+                                <ColumnDefinition x:Name="HudRest" Width="0.5*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.ColumnSpan="2" CornerRadius="2" Background="{StaticResource TrackBrush}" />
+                            <Border x:Name="HudFill" CornerRadius="2" Background="White" />
+                        </Grid>
+                        <TextBlock x:Name="HudText" Width="22" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
 
                 </Grid>
             </Border>

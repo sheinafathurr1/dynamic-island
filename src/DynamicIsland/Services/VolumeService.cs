@@ -42,6 +42,25 @@ internal sealed class VolumeService : IDisposable
     /// <summary>Whether the current output is headphones / a headset.</summary>
     public bool DeviceWorn { get; private set; }
 
+    /// <summary>Nudges the master volume by <paramref name="delta"/> (−1..1). Turning it up also unmutes.</summary>
+    public void Adjust(float delta)
+    {
+        if (_endpoint is null) return;
+
+        var context = Guid.Empty;
+        _endpoint.GetMasterVolumeLevelScalar(out float level);
+        if (delta > 0 && _endpoint.GetMute(out bool muted) == 0 && muted)
+            _endpoint.SetMute(false, ref context);
+        _endpoint.SetMasterVolumeLevelScalar(Math.Clamp(level + delta, 0f, 1f), ref context);
+    }
+
+    public void ToggleMute()
+    {
+        if (_endpoint is null || _endpoint.GetMute(out bool muted) != 0) return;
+        var context = Guid.Empty;
+        _endpoint.SetMute(!muted, ref context);
+    }
+
     public void Dispose()
     {
         try

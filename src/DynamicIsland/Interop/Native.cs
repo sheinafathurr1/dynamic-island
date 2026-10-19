@@ -138,6 +138,12 @@ internal static class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
 
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    /// <summary>Live Shift state; WPF's keyboard state is stale for a window that never takes focus.</summary>
+    public static bool IsShiftDown => (GetAsyncKeyState(0x10) & 0x8000) != 0;
+
     [DllImport("advapi32.dll")]
     public static extern int RegNotifyChangeKeyValue(
         SafeRegistryHandle hKey,

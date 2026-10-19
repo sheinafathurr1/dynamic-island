@@ -1,8 +1,9 @@
 <#
   UI smoke test for Dynamic Island, meant for a Windows CI runner with an interactive desktop.
 
-  Starts the app, drives it with the mouse and UI Automation, and saves screenshots of every state
-  to $OutDir. Fails when the app crashes, a control cannot be found, or it does not exit cleanly.
+  Starts the app, drives it with the mouse, OLE drag & drop and UI Automation, and saves screenshots
+  of every state to $OutDir. Fails when the app crashes, a control cannot be found, a drop does not
+  land on the shelf, or the app does not exit cleanly.
   With -EmitBase64 the screenshots are also written to the log, inside collapsed groups.
 #>
 param(
@@ -13,7 +14,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms, UIAutomationClient, UIAutomationTypes
-Add-Type -ReferencedAssemblies System.Drawing @"
+
+# Shared with the background job that performs the drag (it runs in its own process).
+$helperSource = @"
 using System;
 using System.Drawing;
 using System.Runtime.InteropServices;
@@ -22,6 +25,7 @@ public static class SmokeInput
     [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
     [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
     [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dest, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+    [DllImport("user32.dll")] static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
 
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
@@ -31,10 +35,12 @@ public static class SmokeInput
 
     public static void LeftClick(int x, int y)  { SetCursorPos(x, y); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
     public static void RightClick(int x, int y) { SetCursorPos(x, y); mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero); }
+    public static void MiddleClick()            { mouse_event(0x0020, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0040, 0, 0, 0, UIntPtr.Zero); }
     public static void LeftDown(int x, int y)   { SetCursorPos(x, y); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); }
     public static void LeftUp()                 { mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
     public static void Wheel(int delta)         { mouse_event(0x0800, 0, 0, unchecked((uint)delta), UIntPtr.Zero); }
     public static void HWheel(int delta)        { mouse_event(0x1000, 0, 0, unchecked((uint)delta), UIntPtr.Zero); }
+    public static void ShiftWheel(int delta)    { keybd_event(0x10, 0, 0, UIntPtr.Zero); Wheel(delta); System.Threading.Thread.Sleep(150); keybd_event(0x10, 0, 2, UIntPtr.Zero); }
 
     // SRCCOPY | CAPTUREBLT: CAPTUREBLT is required to include layered (transparent) windows such as the island.
     public static Bitmap Capture(int x, int y, int width, int height)
@@ -52,6 +58,7 @@ public static class SmokeInput
     }
 }
 "@
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition $helperSource
 
 [SmokeInput]::SetProcessDPIAware() | Out-Null
 
@@ -62,18 +69,14 @@ public static class SmokeInput
 Start-Sleep -Seconds 1
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+$OutDir = (Resolve-Path $OutDir).Path
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $centerX = [int]($screen.Left + $screen.Width / 2)
 Write-Host "Screen: $($screen.Width)x$($screen.Height)"
 
-function Save-Shot([string]$Name, [int]$Width = 520, [int]$Height = 220) {
-    $x = [int]($screen.Left + ($screen.Width - $Width) / 2)
-    $bitmap = [SmokeInput]::Capture($x, $screen.Top, $Width, $Height)
+function Emit-Shot([string]$Name) {
     $path = Join-Path $OutDir "$Name.png"
-    $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-    $bitmap.Dispose()
     Write-Host "Saved $path"
-
     if ($EmitBase64) {
         $base64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
         Write-Host "::group::PNG $Name ($($base64.Length) chars)"
@@ -82,6 +85,14 @@ function Save-Shot([string]$Name, [int]$Width = 520, [int]$Height = 220) {
         }
         Write-Host "::endgroup::"
     }
+}
+
+function Save-Shot([string]$Name, [int]$Width = 520, [int]$Height = 220) {
+    $x = [int]($screen.Left + ($screen.Width - $Width) / 2)
+    $bitmap = [SmokeInput]::Capture($x, $screen.Top, $Width, $Height)
+    $bitmap.Save((Join-Path $OutDir "$Name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Dispose()
+    Emit-Shot $Name
 }
 
 function Assert-Running {
@@ -119,29 +130,52 @@ function Expand-ByName([string]$Name) {
 
 function Move-Away { [SmokeInput]::SetCursorPos($centerX, [int]($screen.Height / 2)) | Out-Null }
 
-# Fresh settings so the run always starts from the defaults.
+# ── Test files: two already on the shelf, one to drag in later ─────────────────────────────────
+$files = Join-Path $env:TEMP "island-test"
+Remove-Item -Recurse -Force $files -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path (Join-Path $files "Proyek Skripsi") | Out-Null
+$photo = Join-Path $files "Foto pantai.png"
+$sample = New-Object System.Drawing.Bitmap 320, 240
+$graphics = [System.Drawing.Graphics]::FromImage($sample)
+$sky = New-Object System.Drawing.Drawing2D.LinearGradientBrush (New-Object System.Drawing.Rectangle 0, 0, 320, 240), ([System.Drawing.Color]::FromArgb(255, 255, 159, 67)), ([System.Drawing.Color]::FromArgb(255, 30, 144, 255)), 90
+$graphics.FillRectangle($sky, 0, 0, 320, 240)
+$graphics.FillEllipse([System.Drawing.Brushes]::Gold, 200, 40, 70, 70)
+$graphics.FillRectangle((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(255, 238, 214, 175))), 0, 180, 320, 60)
+$graphics.Dispose(); $sample.Save($photo, [System.Drawing.Imaging.ImageFormat]::Png); $sample.Dispose()
+$note = Join-Path $files "Catatan rapat.txt"
+Set-Content -Path $note -Value "Agenda rapat"
+
+# Fresh settings, with the photo and the folder already deposited on the shelf.
 $dataDir = Join-Path $env:APPDATA "DynamicIsland"
 Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+ConvertTo-Json @($photo, (Join-Path $files "Proyek Skripsi")) | Set-Content -Path (Join-Path $dataDir "shelf.json") -Encoding UTF8
 
+# ── Launch ──────────────────────────────────────────────────────────────────────────────────────
 Move-Away
 $script:process = Start-Process -FilePath $Exe -PassThru
 Start-Sleep -Seconds 5
 Assert-Running
 Save-Shot "01-idle"
 
-# Hover → expanded carousel. Nothing is playing and no timer runs, so it opens on "today".
+# Hover → expanded carousel. Nothing plays and no timer runs, so it opens on "today".
 $islandY = 24
 [SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
 Start-Sleep -Milliseconds 1500
 Assert-Running
 Save-Shot "02-today"
 
-# Mouse wheel up → previous page (timer, with start buttons).
+# A plain wheel is volume now (no audio device on CI: must simply not crash), middle click = mute.
 [SmokeInput]::Wheel(120)
+[SmokeInput]::MiddleClick()
+Start-Sleep -Milliseconds 500
+Assert-Running
+
+# Horizontal scroll (touchpad / tilt wheel) → previous page: the timer with its start buttons.
+[SmokeInput]::HWheel(-120)
 Start-Sleep -Milliseconds 1200
 Save-Shot "03-timer-page"
 
-# Start a timer from the page's buttons.
 Invoke-ByName "25 mnt"
 Start-Sleep -Milliseconds 1500
 Save-Shot "04-timer-running"
@@ -158,16 +192,16 @@ Start-Sleep -Milliseconds 1200
 Assert-Running
 Save-Shot "06-swiped-to-today"
 
-# Horizontal scroll (touchpad / tilt wheel) back to the timer, then once more to hit the edge bounce.
-[SmokeInput]::HWheel(-120)
-Start-Sleep -Milliseconds 1200
-Save-Shot "07-hwheel-timer"
-[SmokeInput]::HWheel(-120)
+# Shift + wheel → next page: the file shelf with the two deposited items.
+[SmokeInput]::ShiftWheel(-120)
+Start-Sleep -Milliseconds 1500
+Save-Shot "07-shelf"
+[SmokeInput]::HWheel(120)   # already the last page: edge bounce
 Start-Sleep -Milliseconds 800
 Assert-Running
 
-# Click the second pagination dot (timer page: island bottom ≈ 8 + 100 + 16 = 124).
-[SmokeInput]::LeftClick($centerX + 11, 112)
+# Click the first pagination dot (shelf page: island bottom = 8 + 128 + 16 = 152; dots 6+6+16 wide).
+[SmokeInput]::LeftClick($centerX - 17, 140)
 [SmokeInput]::SetCursorPos($centerX, 40) | Out-Null
 Start-Sleep -Milliseconds 1200
 Save-Shot "08-dot-click"
@@ -176,26 +210,79 @@ Move-Away
 Start-Sleep -Milliseconds 1500
 Save-Shot "09-timer-compact"
 
-# Context menu and its Timer submenu.
+# ── Real OLE drag & drop: drag a file from another window onto the island, like from Explorer ──
+$form = New-Object System.Windows.Forms.Form
+$form.StartPosition = "Manual"
+$form.Location = New-Object System.Drawing.Point 40, 560
+$form.Size = New-Object System.Drawing.Size 180, 120
+$form.TopMost = $true
+$form.Text = "drag source"
+$form.Show()
+[System.Windows.Forms.Application]::DoEvents()
+
+$dropList = New-Object System.Collections.Specialized.StringCollection
+[void]$dropList.Add($note)
+$data = New-Object System.Windows.Forms.DataObject
+$data.SetFileDropList($dropList)
+
+# DoDragDrop blocks this thread, so a separate process moves the mouse, screenshots and lets go.
+$mover = Start-Job -ArgumentList $helperSource, $centerX, $OutDir -ScriptBlock {
+    param($source, $cx, $out)
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition $source
+    [SmokeInput]::SetProcessDPIAware() | Out-Null
+    Start-Sleep -Milliseconds 800
+    foreach ($i in 1..30) {
+        $x = [int](130 + ($cx - 130) * $i / 30); $y = [int](620 + (24 - 620) * $i / 30)
+        [SmokeInput]::SetCursorPos($x, $y) | Out-Null
+        Start-Sleep -Milliseconds 25
+    }
+    foreach ($i in 1..6) { [SmokeInput]::SetCursorPos($cx + $i, 30) | Out-Null; Start-Sleep -Milliseconds 60 }
+    Start-Sleep -Milliseconds 900
+    $width = 520; $height = 220
+    $shot = [SmokeInput]::Capture([int]($cx - $width / 2), 0, $width, $height)
+    $shot.Save((Join-Path $out "10-drop-zone.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $shot.Dispose()
+    [SmokeInput]::LeftUp()
+}
+[SmokeInput]::LeftDown(130, 620)
+$effect = $form.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]::Copy -bor [System.Windows.Forms.DragDropEffects]::Link)
+Receive-Job $mover -Wait | Out-Host
+Remove-Job $mover
+$form.Close()
+Write-Host "Drop effect: $effect"
+Emit-Shot "10-drop-zone"
+
+Start-Sleep -Milliseconds 900
+Assert-Running
+Save-Shot "11-after-drop"
+$shelf = Get-Content (Join-Path $dataDir "shelf.json") -Raw | ConvertFrom-Json
+if (-not ($shelf -contains $note)) { throw "Dropped file did not land on the shelf: $($shelf -join ', ')" }
+Write-Host "Shelf now holds: $($shelf -join ' | ')"
+
+Move-Away
+Start-Sleep -Milliseconds 2500
+
+# ── Context menu and its Timer submenu ─────────────────────────────────────────────────────────
 [SmokeInput]::RightClick($centerX, $islandY)
 Start-Sleep -Milliseconds 1200
-Save-Shot "10-menu" 760 520
+Save-Shot "12-menu" 760 520
 Expand-ByName "Timer"
 Start-Sleep -Milliseconds 1000
-Save-Shot "11-submenu" 900 560
+Save-Shot "13-submenu" 900 560
 
 # 1-minute timer from the submenu, then wait for the alarm.
 Invoke-ByName "1 menit"
 Move-Away
 Start-Sleep -Seconds 63
 Assert-Running
-Save-Shot "12-timer-done"
+Save-Shot "14-timer-done"
 
 # Dismiss the alarm by clicking it.
 [SmokeInput]::LeftClick($centerX, $islandY)
 Move-Away
 Start-Sleep -Milliseconds 1500
-Save-Shot "13-after-dismiss"
+Save-Shot "15-after-dismiss"
 
 # Switch to the notch style.
 [SmokeInput]::RightClick($centerX, $islandY)
@@ -203,10 +290,10 @@ Start-Sleep -Milliseconds 1000
 Invoke-ByName "Gaya notch (menempel di atas)"
 Move-Away
 Start-Sleep -Milliseconds 1500
-Save-Shot "14-notch-idle"
+Save-Shot "16-notch-idle"
 [SmokeInput]::SetCursorPos($centerX, 14) | Out-Null
 Start-Sleep -Milliseconds 1500
-Save-Shot "15-notch-today"
+Save-Shot "17-notch-today"
 
 # Exit through the menu and make sure the process really ends.
 Move-Away

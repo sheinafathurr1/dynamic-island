@@ -14,10 +14,18 @@ karena mesin CI tidak memutar media.</sub>
 ## Fitur
 
 - **Carousel**: island yang terbuka berisi halaman-halaman yang bisa digeser, dengan titik
-  pagination ala iOS: 🎵 **Musik** (kalau ada media) → ⏱ **Timer** → 📅 **Hari ini**.
-  Geser dengan scroll mouse, swipe dua jari di touchpad, klik-tarik (atau swipe di layar sentuh),
-  atau klik titiknya. Halaman bisa "dilempar", memantul di ujung, halaman samping mengecil dan
-  memudar, dan tinggi island ikut menyesuaikan halaman.
+  pagination ala iOS: 🎵 **Musik** (kalau ada media) → ⏱ **Timer** → 📅 **Hari ini** →
+  📥 **Titipan** (kalau ada file). Geser dengan **Shift + scroll**, swipe dua jari ke samping di
+  touchpad, klik-tarik (atau swipe di layar sentuh), atau klik titiknya. Halaman bisa "dilempar",
+  memantul di ujung, halaman samping mengecil dan memudar, dan tinggi island ikut menyesuaikan.
+- **Scroll untuk volume**: scroll di atas island (kecil maupun terbuka) untuk naik/turun volume
+  2% per langkah; klik tengah (klik roda mouse) untuk mute. Saat island terbuka, bar volume kecil
+  muncul di tempat titik pagination.
+- **Titipan file (seperti NotchDrop)**: seret file atau folder ke island — island membuka area drop
+  dengan garis putus-putus yang bergerak. File muncul sebagai thumbnail di halaman Titipan; seret
+  keluar ke folder/aplikasi mana pun (ikon di judul = bawa semua sekaligus), klik untuk membuka,
+  × untuk melepas. Yang disimpan hanya lokasinya (tidak ada salinan), tetap ada setelah restart,
+  dan badge kecil di island menunjukkan jumlahnya.
 - **Now Playing**: Spotify, YouTube/Chrome/Edge, Media Player, dan semua aplikasi yang muncul di
   kontrol media Windows. Mode ringkas menampilkan cover album + equalizer yang warnanya diambil dari
   cover. Hover atau klik untuk membuka panel penuh: judul, artis, progress bar (bisa diklik untuk
@@ -60,6 +68,7 @@ dan keluar.
 | Timer / Pomodoro | Satu alarm sekali-jalan di akhir hitungan; tampilan hanya di-update selama terlihat |
 | Update tampilan | Hanya untuk halaman yang sedang terlihat (jam, progress lagu, hitung mundur) |
 | Carousel | Pegas yang hanya terhubung ke render loop selama halaman bergeser |
+| Titipan file | Hanya path yang disimpan; thumbnail diambil sekali dari Explorer saat tampil |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).
@@ -121,8 +130,9 @@ src/DynamicIsland/
 │  ├─ PowerMonitor.cs       Status baterai, charger & penghemat baterai
 │  ├─ PrivacyMonitor.cs     Aplikasi yang sedang memakai mikrofon / kamera
 │  ├─ TimerService.cs       Timer & Pomodoro
+│  ├─ ShelfService.cs       Daftar file titipan (shelf.json)
 │  └─ ShellHooks.cs         Notifikasi fullscreen, daya, dan perubahan layar
-├─ Interop/                 Deklarasi Win32 & Core Audio
+├─ Interop/                 Deklarasi Win32, Core Audio & thumbnail Explorer
 └─ AppSettings.cs           Pengaturan (%AppData%\DynamicIsland\settings.json) & autostart
 tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, ambil screenshot)
 ```

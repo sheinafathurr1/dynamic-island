@@ -31,6 +31,7 @@ public partial class IslandWindow : Window
         Media,
         Timer,
         Today,
+        Shelf,
     }
 
     private enum ActivityKind
@@ -49,6 +50,8 @@ public partial class IslandWindow : Window
     private const double PageWidth = 400;
     private const double DotsSpace = 16;
     private const int WM_MOUSEHWHEEL = 0x020E;
+    private const int MaxShelfTiles = 5;
+    private const float VolumeStep = 0.02f; // per wheel notch, same as the keyboard volume keys
 
     /// <summary>After a page turn, further wheel / touchpad input is ignored until it pauses this long.</summary>
     private static readonly TimeSpan ScrollLock = TimeSpan.FromMilliseconds(220);
@@ -58,6 +61,7 @@ public partial class IslandWindow : Window
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly PowerMonitor _power = new();
     private readonly TimerService _timer = new();
+    private readonly ShelfService _shelf = new();
     private readonly MediaService _media;
     private readonly IslandAnimator _animator;
     private readonly SpringValue _strip;
@@ -72,6 +76,8 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer _activityTimer = new();
     private readonly DispatcherTimer _graceTimer = new() { Interval = PauseGrace };
     private readonly DispatcherTimer _liveTimer = new();
+    private readonly DispatcherTimer _dropLeaveTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+    private readonly DispatcherTimer _hudTimer = new() { Interval = TimeSpan.FromMilliseconds(1300) };
 
     private View _view = View.Idle;
     private FrameworkElement? _viewElement;
@@ -100,6 +106,15 @@ public partial class IslandWindow : Window
     private long _dragLastTicks;
     private double _dragVelocity;
     private DateTime _weekStripDate;
+    private Page? _pendingPage;
+
+    // Volume & file shelf
+    private DateTime _lastVolumeGesture;
+    private bool _hudVisible;
+    private bool _dropActive;
+    private bool _draggingOut;
+    private FrameworkElement? _pressedTile;
+    private Point _pressPoint;
 
     private BitmapSource? _artSource;
     private Brush? _artBrush;
@@ -113,7 +128,7 @@ public partial class IslandWindow : Window
         _animator = new IslandAnimator(Island, Stage);
         _strip = new SpringValue(ApplyStripOffset);
         PageStrip.RenderTransform = _stripOffset;
-        foreach (var page in new FrameworkElement[] { MediaPage, TimerPage, TodayPage })
+        foreach (var page in new FrameworkElement[] { MediaPage, TimerPage, TodayPage, ShelfPage })
         {
             page.RenderTransformOrigin = new Point(0.5, 0.35);
             page.RenderTransform = new ScaleTransform();
@@ -139,11 +154,21 @@ public partial class IslandWindow : Window
             ApplyState();
         };
         _liveTimer.Tick += (_, _) => RefreshLiveContent(allPages: false);
+        _dropLeaveTimer.Tick += (_, _) =>
+        {
+            _dropLeaveTimer.Stop();
+            EndDropHover();
+        };
+        _hudTimer.Tick += (_, _) => HideVolumeHud();
 
         _media.Changed += OnMediaChanged;
         _media.TrackChanged += OnTrackChanged;
         _timer.Changed += OnTimerChanged;
         _timer.Finished += OnTimerFinished;
+        _shelf.Changed += OnShelfChanged;
+        _shelf.Load();
+        OnShelfChanged();
+        AttachDragOut(ShelfDragAll, () => _shelf.Items.ToList(), open: null);
         Shape.MouseWheel += Shape_MouseWheel;
 
         Loaded += OnLoaded;
@@ -282,10 +307,12 @@ public partial class IslandWindow : Window
         if (expanded)
         {
             // Open on whatever is most relevant right now; the rest is a swipe away.
-            _page = _media.HasSession && _media.IsPlaying ? Page.Media
+            _page = _pendingPage
+                ?? (_media.HasSession && _media.IsPlaying ? Page.Media
                 : _timer.IsActive ? Page.Timer
                 : _media.HasSession ? Page.Media
-                : Page.Today;
+                : Page.Today);
+            _pendingPage = null;
             _snapStrip = true;
         }
         else
@@ -300,7 +327,7 @@ public partial class IslandWindow : Window
     {
         View view =
             _activity == ActivityKind.TimerDone ? View.Activity // an alarm beats everything, even hover
-            : _expanded ? View.Expanded
+            : _expanded || _dropActive ? View.Expanded
             : _activity is not null ? View.Activity
             : _timer.IsActive || ShowsCompactMedia ? View.Compact
             : View.Idle;
@@ -327,7 +354,7 @@ public partial class IslandWindow : Window
                 return (PageWidth, PageHeight(_page) + DotsSpace, notch ? 28 : 38);
             default:
                 if (notch) return (180, 30, 10);
-                return ShowsPrivacyDots ? (140, 32, 16) : (120, 32, 16);
+                return ShowsPrivacyDots || _shelf.Items.Count > 0 ? (140, 32, 16) : (120, 32, 16);
         }
     }
 
@@ -335,6 +362,7 @@ public partial class IslandWindow : Window
     {
         Page.Media => _media.HasTimeline ? 176 : 150,
         Page.Timer => 100,
+        Page.Shelf => 128,
         _ => 148,
     };
 
@@ -360,6 +388,7 @@ public partial class IslandWindow : Window
         {
             if (previous is not null) FadeOut(previous);
             FadeIn(element);
+            if (_hudVisible) HideVolumeHud();
 
             bool dots = view == View.Expanded;
             PageDots.IsHitTestVisible = dots;
@@ -502,8 +531,15 @@ public partial class IslandWindow : Window
     /// <summary>Keeps the page list, the dots and the strip position in line with what is available.</summary>
     private void SyncPages()
     {
-        List<Page> pages = _media.HasSession ? [Page.Media, Page.Timer, Page.Today] : [Page.Timer, Page.Today];
-        MediaPage.Visibility = _media.HasSession ? Visibility.Visible : Visibility.Collapsed;
+        List<Page> pages = [];
+        if (_media.HasSession) pages.Add(Page.Media);
+        pages.Add(Page.Timer);
+        pages.Add(Page.Today);
+        if (_shelf.Items.Count > 0 || _dropActive) pages.Add(Page.Shelf);
+
+        MediaPage.Visibility = pages.Contains(Page.Media) ? Visibility.Visible : Visibility.Collapsed;
+        ShelfPage.Visibility = pages.Contains(Page.Shelf) ? Visibility.Visible : Visibility.Collapsed;
+        UpdateShelfMode();
         if (!pages.Contains(_page)) _page = Page.Timer;
 
         bool changed = !pages.SequenceEqual(_pages);
@@ -567,6 +603,7 @@ public partial class IslandWindow : Window
     {
         Page.Media => MediaPage,
         Page.Timer => TimerPage,
+        Page.Shelf => ShelfPage,
         _ => TodayPage,
     };
 
@@ -624,11 +661,29 @@ public partial class IslandWindow : Window
         }
     }
 
+    /// <summary>Plain wheel = volume, anywhere on the island. Shift + wheel turns pages (the usual "scroll sideways").</summary>
     private void Shape_MouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (_view != View.Expanded) return;
         e.Handled = true;
-        HandleScroll(-e.Delta); // wheel down / two fingers up → next page
+        if (Native.IsShiftDown)
+        {
+            if (_view == View.Expanded) HandleScroll(-e.Delta);
+            return;
+        }
+
+        if (_volume is null) return;
+        _hoverTimer.Stop(); // adjusting the volume should not pop the island open
+        _lastVolumeGesture = DateTime.UtcNow;
+        _volume.Adjust(e.Delta / 120f * VolumeStep); // touchpads send fractions of a notch: finer steps
+    }
+
+    /// <summary>Middle click (wheel click) toggles mute.</summary>
+    private void Shape_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle || _volume is null) return;
+        e.Handled = true;
+        _lastVolumeGesture = DateTime.UtcNow;
+        _volume.ToggleMute();
     }
 
     /// <summary>Positive = towards the next page. A full wheel notch is 120; touchpads send many small steps.</summary>
@@ -874,7 +929,15 @@ public partial class IslandWindow : Window
 
     private void OnVolumeChanged(float level, bool muted)
     {
-        if (!_settings.ShowVolume || _hiddenForFullscreen) return;
+        // Feedback for the user's own scroll / middle click shows even when volume notifications are off.
+        bool fromGesture = DateTime.UtcNow - _lastVolumeGesture < TimeSpan.FromMilliseconds(600);
+        if ((!_settings.ShowVolume && !fromGesture) || _hiddenForFullscreen) return;
+
+        if (_view == View.Expanded)
+        {
+            ShowVolumeHud(level, muted);
+            return;
+        }
 
         bool silent = muted || level < 0.005f;
         WaveSmall.Visibility = silent ? Visibility.Collapsed : Visibility.Visible;
@@ -885,6 +948,34 @@ public partial class IslandWindow : Window
         VolumeText.Text = muted ? "–" : Math.Round(level * 100).ToString(CultureInfo.CurrentCulture);
 
         ShowActivity(ActivityKind.Volume, VolumePanel, 300, 36, TimeSpan.FromSeconds(1.6));
+    }
+
+    private void ShowVolumeHud(float level, bool muted)
+    {
+        bool silent = muted || level < 0.005f;
+        HudWaves.Visibility = silent ? Visibility.Collapsed : Visibility.Visible;
+        HudMute.Visibility = silent ? Visibility.Visible : Visibility.Collapsed;
+        HudFill.Opacity = muted ? 0.4 : 1;
+        SetProgress(HudDone, HudRest, level);
+        HudText.Text = muted ? "–" : Math.Round(level * 100).ToString(CultureInfo.CurrentCulture);
+
+        if (!_hudVisible)
+        {
+            _hudVisible = true;
+            VolumeHud.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(140)));
+            PageDots.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(100)));
+        }
+        _hudTimer.Stop();
+        _hudTimer.Start();
+    }
+
+    private void HideVolumeHud()
+    {
+        _hudTimer.Stop();
+        _hudVisible = false;
+        VolumeHud.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(160)));
+        if (_view == View.Expanded)
+            PageDots.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(200)));
     }
 
     private void OnAudioDeviceChanged(string name, bool worn)
@@ -1047,6 +1138,339 @@ public partial class IslandWindow : Window
         }
     }
 
+    // ───────────────────────────── file shelf ("titipan") ─────────────────────────────
+
+    private void OnShelfChanged()
+    {
+        int count = _shelf.Items.Count;
+        IdleShelfBadge.Visibility = CompactShelfBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        IdleShelfCount.Text = CompactShelfCount.Text = count.ToString(CultureInfo.CurrentCulture);
+        ShelfCount.Text = count > 0 ? $"  ·  {count} file" : "";
+
+        ShelfTiles.Children.Clear();
+        bool overflow = count > MaxShelfTiles;
+        var shown = _shelf.Items.Take(overflow ? MaxShelfTiles - 1 : MaxShelfTiles).ToList();
+        foreach (var item in shown) ShelfTiles.Children.Add(CreateShelfTile(item));
+        if (overflow) ShelfTiles.Children.Add(CreateMoreTile(_shelf.Items.Skip(shown.Count).ToList()));
+
+        if (IsLoaded) ApplyState();
+    }
+
+    /// <summary>Drop zone while files hover over the island (or when the shelf is empty); tiles otherwise.</summary>
+    private void UpdateShelfMode()
+    {
+        bool empty = _shelf.Items.Count == 0;
+        ShelfDropZone.Visibility = _dropActive || empty ? Visibility.Visible : Visibility.Collapsed;
+        ShelfContent.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+        ShelfDropTitle.Text = _dropActive ? "Lepaskan untuk menitip file" : "Seret file ke sini";
+    }
+
+    private FrameworkElement CreateShelfTile(ShelfItem item)
+    {
+        var thumbnail = new Border
+        {
+            Width = 44,
+            Height = 44,
+            CornerRadius = new CornerRadius(10),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = new ScaleTransform(),
+        };
+        RenderOptions.SetBitmapScalingMode(thumbnail, BitmapScalingMode.HighQuality);
+        SetThumbnail(thumbnail, item);
+
+        var name = new TextBlock
+        {
+            Text = item.Name,
+            Width = 64,
+            MaxHeight = 30,
+            Margin = new Thickness(0, 5, 0, 0),
+            FontSize = 11,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = (Brush)FindResource("SecondaryText"),
+        };
+
+        var remove = new Border
+        {
+            Width = 18,
+            Height = 18,
+            CornerRadius = new CornerRadius(9),
+            Background = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x3C)),
+            BorderBrush = Brushes.Black,
+            BorderThickness = new Thickness(1.5),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, -5, 3, 0),
+            Cursor = Cursors.Hand,
+            Visibility = Visibility.Collapsed,
+            Child = new Viewbox
+            {
+                Width = 7,
+                Height = 7,
+                Child = new Grid
+                {
+                    Width = 16,
+                    Height = 16,
+                    Children = { new System.Windows.Shapes.Path { Data = (Geometry)FindResource("IconClose"), Style = (Style)FindResource("StrokeIcon"), StrokeThickness = 3 } },
+                },
+            },
+        };
+        remove.MouseLeftButtonDown += (_, e) => e.Handled = true;
+        remove.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            _shelf.Remove(item);
+        };
+
+        var tile = new Grid
+        {
+            Width = 64,
+            Margin = new Thickness(4, 0, 4, 0),
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            ToolTip = item.Path,
+            Children = { new StackPanel { Children = { thumbnail, name } }, remove },
+        };
+
+        // Hover: lift the thumbnail a little and offer the × button.
+        tile.MouseEnter += (_, _) =>
+        {
+            remove.Visibility = Visibility.Visible;
+            AnimateScale(thumbnail, 1.07);
+        };
+        tile.MouseLeave += (_, _) =>
+        {
+            remove.Visibility = Visibility.Collapsed;
+            AnimateScale(thumbnail, 1);
+        };
+        AttachDragOut(tile, () => [item], open: item);
+        return tile;
+    }
+
+    /// <summary>"+N" tile when there are more files than fit; dragging it takes all of those.</summary>
+    private FrameworkElement CreateMoreTile(IReadOnlyList<ShelfItem> rest)
+    {
+        var tile = new StackPanel
+        {
+            Width = 64,
+            Margin = new Thickness(4, 0, 4, 0),
+            Background = Brushes.Transparent,
+            Cursor = Cursors.Hand,
+            ToolTip = string.Join(Environment.NewLine, rest.Select(i => i.Name)),
+            Children =
+            {
+                new Border
+                {
+                    Width = 44,
+                    Height = 44,
+                    CornerRadius = new CornerRadius(10),
+                    Background = (Brush)FindResource("TrackBrush"),
+                    Child = new TextBlock
+                    {
+                        Text = $"+{rest.Count}",
+                        FontSize = 14,
+                        FontWeight = FontWeights.SemiBold,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    },
+                },
+                new TextBlock
+                {
+                    Text = "lainnya",
+                    Margin = new Thickness(0, 5, 0, 0),
+                    FontSize = 11,
+                    TextAlignment = TextAlignment.Center,
+                    Foreground = (Brush)FindResource("SecondaryText"),
+                },
+            },
+        };
+        AttachDragOut(tile, () => rest, open: null);
+        return tile;
+    }
+
+    private void SetThumbnail(Border target, ShelfItem item)
+    {
+        if (item.Thumbnail is { } cached)
+        {
+            target.Background = new ImageBrush(cached) { Stretch = Stretch.Uniform };
+            return;
+        }
+
+        // Explorer thumbnails can take a moment (big photos, PDFs): fetch them after the UI has settled.
+        Dispatcher.InvokeAsync(() =>
+        {
+            item.Thumbnail ??= ShellThumbnail.Get(item.Path, 96);
+            if (item.Thumbnail is { } thumbnail) target.Background = new ImageBrush(thumbnail) { Stretch = Stretch.Uniform };
+        }, DispatcherPriority.Background);
+    }
+
+    private static void AnimateScale(UIElement element, double to)
+    {
+        if (element.RenderTransform is not ScaleTransform scale) return;
+        var animation = new DoubleAnimation(to, TimeSpan.FromMilliseconds(160)) { EasingFunction = Ease };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, animation);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
+    }
+
+    /// <summary>Press + move = drag the files out; press + release = open (when <paramref name="open"/> is given).</summary>
+    private void AttachDragOut(FrameworkElement element, Func<IReadOnlyList<ShelfItem>> items, ShelfItem? open)
+    {
+        element.MouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true; // not a carousel swipe
+            _pressedTile = element;
+            _pressPoint = e.GetPosition(this);
+            element.CaptureMouse();
+        };
+        element.MouseMove += (_, e) =>
+        {
+            if (!ReferenceEquals(_pressedTile, element) || e.LeftButton != MouseButtonState.Pressed) return;
+            var point = e.GetPosition(this);
+            if (Math.Abs(point.X - _pressPoint.X) < 5 && Math.Abs(point.Y - _pressPoint.Y) < 5) return;
+
+            _pressedTile = null;
+            element.ReleaseMouseCapture();
+            DragOut(items(), element);
+        };
+        element.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            if (!ReferenceEquals(_pressedTile, element)) return;
+            _pressedTile = null;
+            element.ReleaseMouseCapture();
+            if (open is not null) OpenShelfItem(open);
+        };
+    }
+
+    /// <summary>Hands the files to whatever they are dropped on (Explorer, chat apps, editors...).</summary>
+    private void DragOut(IReadOnlyList<ShelfItem> items, DependencyObject source)
+    {
+        if (items.Count == 0) return;
+
+        var effect = DragDropEffects.None;
+        _draggingOut = true;
+        try
+        {
+            var data = new DataObject(DataFormats.FileDrop, items.Select(i => i.Path).ToArray());
+            effect = DragDrop.DoDragDrop(source, data, DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+        finally
+        {
+            _draggingOut = false;
+        }
+
+        // Delivered: the shelf was only a stopover. Explorer's moves can report "None", so also prune.
+        if (effect != DragDropEffects.None) _shelf.RemoveRange(items);
+        _shelf.PruneMissing();
+    }
+
+    private static void OpenShelfItem(ShelfItem item)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+    }
+
+    private void ShelfClear_Click(object sender, RoutedEventArgs e) => _shelf.Clear();
+
+    private void ShelfBadge_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_activity == ActivityKind.TimerDone) return; // let the click dismiss the alarm
+        e.Handled = true;
+        _hoverTimer.Stop();
+        if (_view == View.Expanded)
+        {
+            GoToPage(Page.Shelf);
+            return;
+        }
+        _pendingPage = Page.Shelf;
+        SetExpanded(true);
+    }
+
+    // DragEnter and DragOver: files are hovering over the island.
+    private void Shape_DragOver(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        bool files = !_draggingOut && e.Data.GetDataPresent(DataFormats.FileDrop);
+        e.Effects = files ? DragDropEffects.Copy : DragDropEffects.None; // never Move: we only keep a reference
+        if (!files) return;
+
+        _dropLeaveTimer.Stop();
+        if (_dropActive) return;
+
+        _dropActive = true;
+        _hoverTimer.Stop();
+        _leaveTimer.Stop();
+        bool wasOpen = _view == View.Expanded;
+        if (!wasOpen)
+        {
+            _page = Page.Shelf;
+            _snapStrip = true;
+        }
+        ApplyState();
+        if (wasOpen) GoToPage(Page.Shelf);
+
+        // "Marching ants" around the drop zone while it is armed.
+        var ants = new DoubleAnimation(0, -14, TimeSpan.FromSeconds(0.7)) { RepeatBehavior = RepeatBehavior.Forever };
+        Timeline.SetDesiredFrameRate(ants, 30);
+        ShelfDropOutline.Stroke = (Brush)FindResource("PrimaryText");
+        ShelfDropOutline.BeginAnimation(System.Windows.Shapes.Shape.StrokeDashOffsetProperty, ants);
+    }
+
+    // Also raised when moving between child elements, hence the short grace timer.
+    private void Shape_DragLeave(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        _dropLeaveTimer.Stop();
+        _dropLeaveTimer.Start();
+    }
+
+    private void Shape_Drop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        _dropLeaveTimer.Stop();
+        if (_draggingOut || e.Data.GetData(DataFormats.FileDrop) is not string[] paths)
+        {
+            EndDropHover();
+            return;
+        }
+
+        // Stay open on the shelf to show what landed; close by itself if the pointer has moved on.
+        // (State first: adding raises Changed, which re-applies the state.)
+        StopDropAnimation();
+        _dropActive = false;
+        _expanded = true;
+        _page = Page.Shelf;
+        _shelf.Add(paths);
+        ApplyState();
+        StartLeaveTimer(TimeSpan.FromSeconds(1.6));
+    }
+
+    private void EndDropHover()
+    {
+        if (!_dropActive) return;
+        _dropActive = false;
+        StopDropAnimation();
+        ApplyState();
+    }
+
+    private void StopDropAnimation()
+    {
+        ShelfDropOutline.BeginAnimation(System.Windows.Shapes.Shape.StrokeDashOffsetProperty, null);
+        ShelfDropOutline.Stroke = (Brush)FindResource("SecondaryText");
+    }
+
     // ───────────────────────────── mouse ─────────────────────────────
 
     private void Shape_MouseEnter(object sender, MouseEventArgs e)
@@ -1058,7 +1482,14 @@ public partial class IslandWindow : Window
     private void Shape_MouseLeave(object sender, MouseEventArgs e)
     {
         _hoverTimer.Stop();
-        if (_expanded && !_pointerDown) _leaveTimer.Start();
+        if (_expanded && !_pointerDown && !_draggingOut) StartLeaveTimer(TimeSpan.FromMilliseconds(320));
+    }
+
+    private void StartLeaveTimer(TimeSpan delay)
+    {
+        _leaveTimer.Stop();
+        _leaveTimer.Interval = delay;
+        _leaveTimer.Start();
     }
 
     private void Shape_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
