@@ -47,6 +47,15 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
   aplikasinya; arahkan kursor untuk menahannya. Mengikuti aturan Windows: tidak muncul saat
   *Do not disturb* / Fokus aktif atau untuk aplikasi yang notifikasinya dimatikan. Isi pesan bisa
   disembunyikan (klik kanan → Notifikasi → Tampilkan isi pesan).
+  **Tidak dobel**: setelah island menampilkan notifikasi sebuah aplikasi, banner bawaan Windows untuk
+  aplikasi itu dimatikan (saklar yang sama dengan Settings → Notifikasi → aplikasi → *Show
+  notification banners*), jadi pesan berikutnya hanya muncul sekali, di island. Pesannya tetap masuk
+  ke pusat notifikasi Windows. Saat island ditutup, banner Windows otomatis dinyalakan lagi.
+- **Tidak menghalangi**: saat tidak ada aktivitas, island menjadi garis tipis di tepi paling atas
+  layar, jadi tab browser dan tombol di bawahnya tetap bisa dipakai; dorong kursor ke tengah atas
+  untuk membukanya. Island juga baru terbuka kalau kursor *berhenti* di atasnya, bukan sekadar lewat.
+  Opsi **Jangan tutupi jendela** menyisakan ruang di atas layar seperti taskbar, sehingga jendela
+  yang di-maximize mulai di bawah island.
 - **Lagu baru**: notifikasi singkat berisi cover, judul, dan artis setiap kali lagu berganti.
 - **Timer & Pomodoro**: mulai dari halaman Timer (5–45 menit) atau menu klik kanan (1–60 menit).
   Island ringkas menampilkan ring hitung mundur + sisa waktu (berdampingan dengan cover kalau musik
@@ -70,9 +79,10 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 - Animasi pegas (*spring*) dengan sedikit pantulan seperti aslinya, tajam di semua skala DPI.
 - Tidak mencuri fokus saat diklik dan tidak muncul di taskbar maupun Alt+Tab.
 
-Klik kanan island untuk menu: **Timer**, **Kalender**, gaya island/notch, **Notifikasi** (volume,
-lagu baru, perangkat audio, mikrofon & kamera, notifikasi aplikasi — masing-masing bisa dimatikan),
-**Musik** (lirik, equalizer suara asli, garis warna cover), jalankan saat Windows mulai, dan keluar.
+Klik kanan island untuk menu: **Timer**, **Kalender**, gaya island/notch, garis tipis saat diam,
+jangan tutupi jendela, **Notifikasi** (volume, lagu baru, perangkat audio, mikrofon & kamera,
+notifikasi aplikasi, tanpa banner Windows — masing-masing bisa dimatikan), **Musik** (lirik,
+equalizer suara asli, garis warna cover), jalankan saat Windows mulai, dan keluar.
 
 ## Kenapa ringan
 
@@ -188,6 +198,10 @@ tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, a
   aplikasi yang dipaketkan sebagai MSIX. Formatnya tidak didokumentasikan, jadi update Windows bisa
   saja mengubahnya; kalau itu terjadi, fitur ini diam saja (tidak mengganggu fitur lain). Klik
   notifikasi membuka aplikasinya, belum langsung ke chat tertentu.
+- Pesan pertama dari sebuah aplikasi masih muncul dobel (banner Windows-nya baru dimatikan setelah
+  itu). Kalau island dihentikan paksa (Task Manager), banner Windows untuk aplikasi tersebut tetap
+  mati sampai island jalan dan ditutup lagi lewat **Keluar**, atau sampai dinyalakan manual di
+  Settings → Notifikasi.
 - Aplikasi Kalender bawaan Windows sudah dihentikan Microsoft dan Outlook baru tidak membagikan
   agendanya ke aplikasi lain, jadi agenda memakai link iCal. Link itu rahasia: hanya disimpan di
   `settings.json` di PC ini.
