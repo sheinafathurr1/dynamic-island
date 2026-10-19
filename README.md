@@ -13,14 +13,19 @@ karena mesin CI tidak memutar media.</sub>
 
 ## Fitur
 
+- **Carousel**: island yang terbuka berisi halaman-halaman yang bisa digeser, dengan titik
+  pagination ala iOS: 🎵 **Musik** (kalau ada media) → ⏱ **Timer** → 📅 **Hari ini**.
+  Geser dengan scroll mouse, swipe dua jari di touchpad, klik-tarik (atau swipe di layar sentuh),
+  atau klik titiknya. Halaman bisa "dilempar", memantul di ujung, halaman samping mengecil dan
+  memudar, dan tinggi island ikut menyesuaikan halaman.
 - **Now Playing**: Spotify, YouTube/Chrome/Edge, Media Player, dan semua aplikasi yang muncul di
   kontrol media Windows. Mode ringkas menampilkan cover album + equalizer yang warnanya diambil dari
   cover. Hover atau klik untuk membuka panel penuh: judul, artis, progress bar (bisa diklik untuk
   *seek*), serta tombol previous / play-pause / next.
 - **Lagu baru**: notifikasi singkat berisi cover, judul, dan artis setiap kali lagu berganti.
-- **Timer & Pomodoro**: mulai dari menu klik kanan (1–60 menit) atau tombol cepat di panel jam.
+- **Timer & Pomodoro**: mulai dari halaman Timer (5–45 menit) atau menu klik kanan (1–60 menit).
   Island ringkas menampilkan ring hitung mundur + sisa waktu (berdampingan dengan cover kalau musik
-  jalan). Hover untuk pause, +1 menit, stop, dan mini player. Saat waktu habis island berdenyut dan
+  jalan). Di halaman Timer ada pause, +1 menit, dan stop. Saat waktu habis island berdenyut dan
   berbunyi; klik untuk menutup.
 - **Indikator mikrofon & kamera**: titik oranye (mikrofon) dan hijau (kamera) seperti iPhone,
   plus notifikasi berisi nama aplikasi yang memakainya (Zoom, Discord, Chrome, dll.).
@@ -29,8 +34,8 @@ karena mesin CI tidak memutar media.</sub>
 - **Volume**: indikator volume & mute saat volume diubah (tombol keyboard, tray, atau aplikasi).
 - **Baterai**: "Mengisi daya" saat charger dicolok, "Menggunakan baterai" saat dicabut,
   "Baterai lemah" ketika baterai turun ke 20% dan 10%, serta status penghemat baterai (kuning).
-- **Jam & tanggal**: hover island saat tidak ada media untuk melihat jam, tanggal, baterai, dan
-  tombol timer cepat.
+- **Hari ini**: jam, tanggal, kalender minggu ini (hari ini dilingkari), baterai, dan perangkat
+  audio yang sedang dipakai.
 - **Dua gaya**: *Island* (pil melayang) atau *Notch* (menempel di tepi atas dengan lekukan seperti
   MacBook).
 - **Otomatis sembunyi** saat ada aplikasi fullscreen (game, video, presentasi).
@@ -53,7 +58,8 @@ dan keluar.
 | Fullscreen | Notifikasi AppBar `ABN_FULLSCREENAPP` dari shell, tanpa polling |
 | Mikrofon & kamera | Notifikasi perubahan registry (`RegNotifyChangeKeyValue`), tanpa polling |
 | Timer / Pomodoro | Satu alarm sekali-jalan di akhir hitungan; tampilan hanya di-update selama terlihat |
-| Update tampilan | Hanya saat panel jam/media/timer sedang terlihat |
+| Update tampilan | Hanya untuk halaman yang sedang terlihat (jam, progress lagu, hitung mundur) |
+| Carousel | Pegas yang hanya terhubung ke render loop selama halaman bergeser |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).
@@ -98,10 +104,11 @@ Untuk laptop ARM (Snapdragon), ganti `win-x64` dengan `win-arm64`.
 
 ```
 src/DynamicIsland/
-├─ IslandWindow.xaml(.cs)   Tampilan island + state machine (idle / ringkas / aktivitas / expanded)
+├─ IslandWindow.xaml(.cs)   Tampilan island, state machine, dan carousel halaman
 ├─ Theme.xaml               Warna, ikon vektor, gaya tombol & menu klik kanan
 ├─ Animation/
 │  ├─ Spring.cs             Fisika pegas (response + damping ratio, seperti SwiftUI)
+│  ├─ SpringValue.cs        Satu nilai berpegas (posisi carousel)
 │  └─ IslandAnimator.cs     Morph lebar, tinggi, dan sudut island
 ├─ Controls/
 │  ├─ EqualizerBars.cs      Animasi gelombang "now playing"
