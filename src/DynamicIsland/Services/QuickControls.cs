@@ -39,25 +39,31 @@ internal sealed class QuickControls
         }
     }
 
-    /// <summary>Finds the radios once, when the controls page is first needed.</summary>
+    /// <summary>Finds the radios once. Off the UI thread with a time limit: the radio service may be slow or missing.</summary>
     public async void Start()
     {
         if (_started) return;
         _started = true;
-        try
+        var lookup = Task.Run(async () =>
         {
-            if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed) return;
-            foreach (var radio in await Radio.GetRadiosAsync())
+            try
             {
-                if (radio.Kind == RadioKind.WiFi && _wifi is null) _wifi = radio;
-                else if (radio.Kind == RadioKind.Bluetooth && _bluetooth is null) _bluetooth = radio;
-                else continue;
-                radio.StateChanged += (_, _) => _dispatcher.InvokeAsync(() => Changed?.Invoke());
+                if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed) return [];
+                return (IReadOnlyList<Radio>)await Radio.GetRadiosAsync();
             }
-        }
-        catch (Exception)
+            catch (Exception)
+            {
+                return []; // no radio service (some desktops, servers): the switches stay greyed out
+            }
+        });
+        if (await Task.WhenAny(lookup, Task.Delay(TimeSpan.FromSeconds(15))) != lookup) return;
+
+        foreach (var radio in await lookup)
         {
-            // No radio service (some desktops, servers): the switches stay greyed out.
+            if (radio.Kind == RadioKind.WiFi && _wifi is null) _wifi = radio;
+            else if (radio.Kind == RadioKind.Bluetooth && _bluetooth is null) _bluetooth = radio;
+            else continue;
+            radio.StateChanged += (_, _) => _dispatcher.InvokeAsync(() => Changed?.Invoke());
         }
         Changed?.Invoke();
     }

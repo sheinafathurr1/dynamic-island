@@ -1,4 +1,5 @@
 using System.Net.Http;
+using Microsoft.Win32;
 using System.Windows.Threading;
 using Windows.Devices.Geolocation;
 
@@ -102,20 +103,47 @@ internal sealed class WeatherService
         return WeatherPlace.ParseSearch(json);
     }
 
-    /// <summary>Windows' location (Settings → Privacy → Location, "let desktop apps access your location").</summary>
+    /// <summary>
+    /// Windows' location, but only when the user already allows it for desktop apps (Settings →
+    /// Privacy → Location): no surprise permission prompt. Runs off the UI thread with a time limit,
+    /// because the location service can take long to answer (or not at all).
+    /// </summary>
     private static async Task<WeatherPlace?> LocateAsync()
     {
+        if (!DesktopLocationAllowed()) return null;
+        var lookup = Task.Run(async () =>
+        {
+            try
+            {
+                if (await Geolocator.RequestAccessAsync() != GeolocationAccessStatus.Allowed) return null;
+                var locator = new Geolocator { DesiredAccuracy = PositionAccuracy.Default };
+                var position = await locator.GetGeopositionAsync(TimeSpan.FromHours(3), TimeSpan.FromSeconds(10));
+                var point = position.Coordinate.Point.Position;
+                return new WeatherPlace("", point.Latitude, point.Longitude);
+            }
+            catch (Exception)
+            {
+                return null; // no sensor, service off, timed out
+            }
+        });
+        return await Task.WhenAny(lookup, Task.Delay(TimeSpan.FromSeconds(20))) == lookup ? await lookup : null;
+    }
+
+    private static bool DesktopLocationAllowed()
+    {
+        const string store = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location";
         try
         {
-            if (await Geolocator.RequestAccessAsync() != GeolocationAccessStatus.Allowed) return null;
-            var locator = new Geolocator { DesiredAccuracy = PositionAccuracy.Default };
-            var position = await locator.GetGeopositionAsync(TimeSpan.FromHours(3), TimeSpan.FromSeconds(10));
-            var point = position.Coordinate.Point.Position;
-            return new WeatherPlace("", point.Latitude, point.Longitude);
+            using var device = Registry.LocalMachine.OpenSubKey(store);
+            using var user = Registry.CurrentUser.OpenSubKey(store);
+            using var desktop = Registry.CurrentUser.OpenSubKey(store + @"\NonPackaged");
+            return device?.GetValue("Value") as string != "Deny"
+                && user?.GetValue("Value") as string == "Allow"
+                && (desktop?.GetValue("Value") as string ?? "Allow") == "Allow";
         }
         catch (Exception)
         {
-            return null; // location off, no sensor, timed out
+            return false;
         }
     }
 }

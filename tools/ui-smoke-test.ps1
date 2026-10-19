@@ -384,8 +384,16 @@ function Set-CallTimes([long]$Start, [long]$Stop) {
 # ── Launch ──────────────────────────────────────────────────────────────────────────────────────
 Move-Away
 $script:process = Start-Process -FilePath $Exe -PassThru
-Start-Sleep -Seconds 5
+$ownWindow = New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ProcessIdProperty), $script:process.Id
+$deadline = (Get-Date).AddSeconds(15)
+while (-not [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $ownWindow) -and (Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 300
+}
 Assert-Running
+if (-not [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $ownWindow)) {
+    throw "The island window never appeared: the app is stuck while starting"
+}
+Start-Sleep -Seconds 3
 Save-Shot "01-idle"
 
 # Idle, the island is a thin line at the very top edge: push the pointer up there to open it.

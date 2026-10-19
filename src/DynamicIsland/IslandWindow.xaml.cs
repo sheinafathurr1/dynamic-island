@@ -271,7 +271,6 @@ public partial class IslandWindow : Window
         Shape.MouseMove += Shape_MouseMove;
         _calendar.Changed += OnCalendarChanged;
         _calendar.SetSource(_settings.CalendarSource);
-        _weather.Configure(_settings.ShowWeather, _settings.WeatherCity);
 
         Loaded += OnLoaded;
     }
@@ -388,6 +387,7 @@ public partial class IslandWindow : Window
             Log.Error(ex);
         }
         if (_settings.ShowControlsPage) _quick.Start();
+        _weather.Configure(_settings.ShowWeather, _settings.WeatherCity);
 
         try
         {
@@ -2819,6 +2819,7 @@ public partial class IslandWindow : Window
                 break;
             case nameof(AppSettings.ShowControlsPage):
                 if (_settings.ShowControlsPage) _quick.Start();
+        _weather.Configure(_settings.ShowWeather, _settings.WeatherCity);
                 break;
         }
         ApplyState(); // pages, sizes, visuals: cheap to re-evaluate for any change
