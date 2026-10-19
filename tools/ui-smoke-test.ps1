@@ -165,14 +165,14 @@ Start-Sleep -Milliseconds 1500
 Assert-Running
 Save-Shot "02-today"
 
-# A plain wheel is volume now (no audio device on CI: must simply not crash), middle click = mute.
-[SmokeInput]::Wheel(120)
+# Shift + wheel is volume (no audio device on CI: must simply not crash), middle click = mute.
+[SmokeInput]::ShiftWheel(120)
 [SmokeInput]::MiddleClick()
 Start-Sleep -Milliseconds 500
 Assert-Running
 
-# Horizontal scroll (touchpad / tilt wheel) → previous page: the timer with its start buttons.
-[SmokeInput]::HWheel(-120)
+# Plain wheel up → previous page: the timer with its start buttons.
+[SmokeInput]::Wheel(120)
 Start-Sleep -Milliseconds 1200
 Save-Shot "03-timer-page"
 
@@ -192,8 +192,8 @@ Start-Sleep -Milliseconds 1200
 Assert-Running
 Save-Shot "06-swiped-to-today"
 
-# Shift + wheel → next page: the file shelf with the two deposited items.
-[SmokeInput]::ShiftWheel(-120)
+# Plain wheel down → next page: the file shelf with the two deposited items.
+[SmokeInput]::Wheel(-120)
 Start-Sleep -Milliseconds 1500
 Save-Shot "07-shelf"
 [SmokeInput]::HWheel(120)   # already the last page: edge bounce
@@ -294,6 +294,60 @@ Move-Away
 Start-Sleep -Milliseconds 1500
 Save-Shot "15-after-dismiss"
 
+# ── Lyrics: a media session like Spotify's, created through the same Windows API (SMTC) ──────
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+    $probe = Invoke-RestMethod -TimeoutSec 15 -Headers @{ "User-Agent" = "DynamicIsland-CI" } -Uri "https://lrclib.net/api/get?track_name=Bohemian%20Rhapsody&artist_name=Queen&album_name=A%20Night%20at%20the%20Opera&duration=354"
+    Write-Host "LRCLIB probe: synced lyrics $([bool]$probe.syncedLyrics), duration $($probe.duration)"
+} catch {
+    Write-Host "LRCLIB probe failed: $_"
+}
+
+$player = $null
+try {
+    [void][Windows.Media.Playback.MediaPlayer, Windows.Media.Playback, ContentType = WindowsRuntime]
+    [void][Windows.Media.SystemMediaTransportControlsTimelineProperties, Windows.Media, ContentType = WindowsRuntime]
+    $player = [Windows.Media.Playback.MediaPlayer]::new()
+    $player.CommandManager.IsEnabled = $false   # we drive the system media controls ourselves
+    $smtc = $player.SystemMediaTransportControls
+    $smtc.IsEnabled = $true
+    $smtc.IsPlayEnabled = $true
+    $smtc.IsPauseEnabled = $true
+    $smtc.IsNextEnabled = $true
+    $smtc.IsPreviousEnabled = $true
+    $updater = $smtc.DisplayUpdater
+    $updater.Type = [Windows.Media.MediaPlaybackType]::Music
+    $updater.MusicProperties.Title = "Bohemian Rhapsody"
+    $updater.MusicProperties.Artist = "Queen"
+    $updater.MusicProperties.AlbumTitle = "A Night at the Opera"
+    $updater.Update()
+    $timeline = [Windows.Media.SystemMediaTransportControlsTimelineProperties]::new()
+    $timeline.StartTime = [TimeSpan]::Zero
+    $timeline.MinSeekTime = [TimeSpan]::Zero
+    $timeline.EndTime = [TimeSpan]::FromSeconds(354)
+    $timeline.MaxSeekTime = [TimeSpan]::FromSeconds(354)
+    $timeline.Position = [TimeSpan]::FromSeconds(55)
+    $smtc.UpdateTimelineProperties($timeline)
+    $smtc.PlaybackStatus = [Windows.Media.MediaPlaybackStatus]::Playing
+    Write-Host "Fake media session: Queen - Bohemian Rhapsody"
+} catch {
+    Write-Host "Could not create a media session: $_"
+}
+
+Move-Away
+Start-Sleep -Seconds 6   # session pick-up + lyrics download
+Assert-Running
+Save-Shot "18-compact-lyrics"
+[SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
+Start-Sleep -Milliseconds 1500
+Save-Shot "19-media-page"
+[SmokeInput]::Wheel(-120)   # next page: lyrics
+Start-Sleep -Milliseconds 1800
+Assert-Running
+Save-Shot "20-lyrics-page"
+Move-Away
+Start-Sleep -Milliseconds 1500
+
 # Switch to the notch style.
 [SmokeInput]::RightClick($centerX, $islandY)
 Start-Sleep -Milliseconds 1000
@@ -313,6 +367,7 @@ Start-Sleep -Milliseconds 1000
 Invoke-ByName "Keluar"
 if (-not $script:process.WaitForExit(10000)) { throw "Dynamic Island did not exit after 'Keluar'" }
 Write-Host "Exited with code $($script:process.ExitCode)"
+if ($player) { $player.Dispose() }
 
 $log = Join-Path $dataDir "error.log"
 if (Test-Path $log) {

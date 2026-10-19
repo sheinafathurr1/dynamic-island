@@ -36,6 +36,7 @@ internal sealed class MediaService : IDisposable
 
     public string Title { get; private set; } = "";
     public string Artist { get; private set; } = "";
+    public string Album { get; private set; } = "";
     public BitmapSource? Art { get; private set; }
     public Color Accent { get; private set; } = DefaultAccent;
     public bool IsPlaying { get; private set; }
@@ -244,6 +245,7 @@ internal sealed class MediaService : IDisposable
 
         Title = title;
         Artist = artist;
+        Album = properties?.AlbumTitle?.Trim() ?? "";
         Art = art;
         Accent = accent;
         Changed?.Invoke();

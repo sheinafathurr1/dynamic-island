@@ -29,9 +29,20 @@ public partial class IslandWindow : Window
     private enum Page
     {
         Media,
+        Lyrics,
         Timer,
         Today,
         Shelf,
+    }
+
+    private enum LyricsStatus
+    {
+        None,
+        Loading,
+        Ready,
+        Instrumental,
+        NotFound,
+        Offline,
     }
 
     private enum ActivityKind
@@ -53,6 +64,9 @@ public partial class IslandWindow : Window
     private const int MaxShelfTiles = 5;
     private const float VolumeStep = 0.02f; // per wheel notch, same as the keyboard volume keys
 
+    /// <summary>Show each lyric line a hair early so it appears together with the voice.</summary>
+    private static readonly TimeSpan LyricLead = TimeSpan.FromMilliseconds(150);
+
     /// <summary>After a page turn, further wheel / touchpad input is ignored until it pauses this long.</summary>
     private static readonly TimeSpan ScrollLock = TimeSpan.FromMilliseconds(220);
 
@@ -62,6 +76,7 @@ public partial class IslandWindow : Window
     private readonly PowerMonitor _power = new();
     private readonly TimerService _timer = new();
     private readonly ShelfService _shelf = new();
+    private readonly LyricsService _lyricsService = new();
     private readonly MediaService _media;
     private readonly IslandAnimator _animator;
     private readonly SpringValue _strip;
@@ -78,6 +93,9 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer _liveTimer = new();
     private readonly DispatcherTimer _dropLeaveTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
     private readonly DispatcherTimer _hudTimer = new() { Interval = TimeSpan.FromMilliseconds(1300) };
+    private readonly DispatcherTimer _lyricTimer = new();
+    private readonly SpringValue _lyricsScroll;
+    private readonly TranslateTransform _lyricsOffset = new();
 
     private View _view = View.Idle;
     private FrameworkElement? _viewElement;
@@ -116,6 +134,14 @@ public partial class IslandWindow : Window
     private FrameworkElement? _pressedTile;
     private Point _pressPoint;
 
+    // Lyrics
+    private Lyrics? _lyrics;
+    private LyricsStatus _lyricsStatus;
+    private string _lyricsKey = "";
+    private CancellationTokenSource? _lyricsCancel;
+    private int _lyricIndex = -2;
+    private DependencyObject? _pressTarget;
+
     private BitmapSource? _artSource;
     private Brush? _artBrush;
     private Color _accent;
@@ -128,7 +154,9 @@ public partial class IslandWindow : Window
         _animator = new IslandAnimator(Island, Stage);
         _strip = new SpringValue(ApplyStripOffset);
         PageStrip.RenderTransform = _stripOffset;
-        foreach (var page in new FrameworkElement[] { MediaPage, TimerPage, TodayPage, ShelfPage })
+        _lyricsScroll = new SpringValue(y => _lyricsOffset.Y = y);
+        LyricsLines.RenderTransform = _lyricsOffset;
+        foreach (var page in new FrameworkElement[] { MediaPage, LyricsPage, TimerPage, TodayPage, ShelfPage })
         {
             page.RenderTransformOrigin = new Point(0.5, 0.35);
             page.RenderTransform = new ScaleTransform();
@@ -160,6 +188,7 @@ public partial class IslandWindow : Window
             EndDropHover();
         };
         _hudTimer.Tick += (_, _) => HideVolumeHud();
+        _lyricTimer.Tick += (_, _) => ScheduleLyricTick();
 
         _media.Changed += OnMediaChanged;
         _media.TrackChanged += OnTrackChanged;
@@ -213,9 +242,11 @@ public partial class IslandWindow : Window
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
         // WPF has no event for horizontal scrolling (tilt wheel, two-finger touchpad swipes).
-        if (msg == WM_MOUSEHWHEEL && _view == View.Expanded)
+        if (msg == WM_MOUSEHWHEEL)
         {
-            HandleScroll((short)((wParam.ToInt64() >> 16) & 0xFFFF));
+            int delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+            if (Native.IsShiftDown) AdjustVolume(delta); // some mouse drivers turn Shift + wheel into a sideways scroll
+            else if (_view == View.Expanded) HandleScroll(delta);
             handled = true;
         }
         return 0;
@@ -338,6 +369,7 @@ public partial class IslandWindow : Window
         var (width, height, radius) = SizeOf(view);
         _animator.AnimateTo(width, height, radius);
         SwitchTo(view, width, height);
+        ScheduleLyricTick();
     }
 
     private (double Width, double Height, double Radius) SizeOf(View view)
@@ -346,7 +378,7 @@ public partial class IslandWindow : Window
         switch (view)
         {
             case View.Compact:
-                double width = ShowsCompactMedia ? 250 : 200;
+                double width = ShowsCompactLyric ? 380 : ShowsCompactMedia ? 250 : 200;
                 return notch ? (width + 10, 32, 12) : (width, 32, 16);
             case View.Activity:
                 return (_activitySize.Width, _activitySize.Height, notch ? 14 : _activitySize.Height / 2);
@@ -361,6 +393,7 @@ public partial class IslandWindow : Window
     private double PageHeight(Page page) => page switch
     {
         Page.Media => _media.HasTimeline ? 176 : 150,
+        Page.Lyrics => 168,
         Page.Timer => 100,
         Page.Shelf => 134,
         _ => 148,
@@ -439,6 +472,7 @@ public partial class IslandWindow : Window
         CompactRing.Visibility = !media && timer ? Visibility.Visible : Visibility.Collapsed;
         CompactEq.Visibility = media && !timer ? Visibility.Visible : Visibility.Collapsed;
         CompactTimerText.Visibility = timer ? Visibility.Visible : Visibility.Collapsed;
+        CompactLyric.Visibility = ShowsCompactLyric ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void FadeIn(FrameworkElement element)
@@ -533,11 +567,13 @@ public partial class IslandWindow : Window
     {
         List<Page> pages = [];
         if (_media.HasSession) pages.Add(Page.Media);
+        if (_media.HasSession && _settings.ShowLyrics) pages.Add(Page.Lyrics);
         pages.Add(Page.Timer);
         pages.Add(Page.Today);
         if (_shelf.Items.Count > 0 || _dropActive) pages.Add(Page.Shelf);
 
         MediaPage.Visibility = pages.Contains(Page.Media) ? Visibility.Visible : Visibility.Collapsed;
+        LyricsPage.Visibility = pages.Contains(Page.Lyrics) ? Visibility.Visible : Visibility.Collapsed;
         ShelfPage.Visibility = pages.Contains(Page.Shelf) ? Visibility.Visible : Visibility.Collapsed;
         UpdateShelfMode();
         if (!pages.Contains(_page)) _page = Page.Timer;
@@ -602,6 +638,7 @@ public partial class IslandWindow : Window
     private FrameworkElement PageElement(Page page) => page switch
     {
         Page.Media => MediaPage,
+        Page.Lyrics => LyricsPage,
         Page.Timer => TimerPage,
         Page.Shelf => ShelfPage,
         _ => TodayPage,
@@ -661,20 +698,21 @@ public partial class IslandWindow : Window
         }
     }
 
-    /// <summary>Plain wheel = volume, anywhere on the island. Shift + wheel turns pages (the usual "scroll sideways").</summary>
+    /// <summary>Plain wheel turns the carousel pages; Shift + wheel is volume, anywhere on the island.</summary>
     private void Shape_MouseWheel(object sender, MouseWheelEventArgs e)
     {
         e.Handled = true;
-        if (Native.IsShiftDown)
-        {
-            if (_view == View.Expanded) HandleScroll(-e.Delta);
-            return;
-        }
+        if (Native.IsShiftDown) AdjustVolume(e.Delta);
+        else if (_view == View.Expanded) HandleScroll(-e.Delta); // wheel down / two fingers up → next page
+    }
 
+    /// <summary>One wheel notch (120) = 2%; touchpads send fractions of a notch, so they get finer steps.</summary>
+    private void AdjustVolume(int delta)
+    {
         if (_volume is null) return;
         _hoverTimer.Stop(); // adjusting the volume should not pop the island open
         _lastVolumeGesture = DateTime.UtcNow;
-        _volume.Adjust(e.Delta / 120f * VolumeStep); // touchpads send fractions of a notch: finer steps
+        _volume.Adjust(delta / 120f * VolumeStep);
     }
 
     /// <summary>Middle click (wheel click) toggles mute.</summary>
@@ -711,6 +749,7 @@ public partial class IslandWindow : Window
         // Buttons and the seek bar handle their own clicks, so this only fires on "empty" page areas.
         _pointerDown = true;
         _dragging = false;
+        _pressTarget = e.OriginalSource as DependencyObject;
         _dragStartX = _dragLastX = e.GetPosition(Island).X;
         _dragLastTicks = Stopwatch.GetTimestamp();
         _dragVelocity = 0;
@@ -744,8 +783,13 @@ public partial class IslandWindow : Window
     private void PageViewport_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (!_pointerDown) return;
-        if (_dragging) e.Handled = true; // a swipe is not a click
+        bool swiped = _dragging;
+        if (swiped) e.Handled = true; // a swipe is not a click
         FinishDrag();
+
+        // A tap on a lyric line jumps the song to that line, like in Spotify.
+        if (!swiped && _pressTarget is FrameworkElement { Tag: LyricLine line } && _lyrics?.IsSynced == true && _media.HasTimeline)
+            _media.Seek(line.Time.TotalSeconds / _media.Duration.TotalSeconds);
     }
 
     private void PageViewport_LostMouseCapture(object sender, MouseEventArgs e)
@@ -793,6 +837,7 @@ public partial class IslandWindow : Window
         _wasPlaying = _media.IsPlaying;
 
         UpdateMediaContent();
+        if (LyricsKey != _lyricsKey) LoadLyrics();
         ApplyState();
     }
 
@@ -870,6 +915,148 @@ public partial class IslandWindow : Window
         e.Handled = true;
         if (MediaTrack.ActualWidth <= 0) return;
         _media.Seek(e.GetPosition(MediaTrack).X / MediaTrack.ActualWidth);
+    }
+
+    // ───────────────────────────── lyrics ─────────────────────────────
+
+    private string LyricsKey => _media.HasSession && _settings.ShowLyrics ? $"{_media.Artist}\u0001{_media.Title}" : "";
+
+    private bool HasLyricLines => _lyrics is { IsInstrumental: false, Lines.Count: > 0 };
+
+    private bool ShowsCompactLyric => _settings.ShowLyrics && _settings.CompactLyrics && ShowsCompactMedia && HasLyricLines;
+
+    private async void LoadLyrics()
+    {
+        _lyricsCancel?.Cancel();
+        _lyricsKey = LyricsKey;
+        _lyrics = null;
+        _lyricIndex = -2;
+        LyricsLines.Children.Clear();
+
+        if (_lyricsKey.Length == 0)
+        {
+            SetLyricsStatus(LyricsStatus.None);
+            return;
+        }
+
+        string key = _lyricsKey;
+        var cancel = _lyricsCancel = new CancellationTokenSource();
+        SetLyricsStatus(LyricsStatus.Loading);
+
+        Lyrics? lyrics;
+        try
+        {
+            lyrics = await _lyricsService.GetAsync(_media.Title, _media.Artist, _media.Album, _media.Duration, cancel.Token);
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            return; // the track changed again
+        }
+        catch (Exception)
+        {
+            if (key == _lyricsKey) SetLyricsStatus(LyricsStatus.Offline); // no internet: not worth an error.log entry
+            return;
+        }
+        if (key != _lyricsKey) return;
+
+        _lyrics = lyrics;
+        BuildLyricLines();
+        SetLyricsStatus(lyrics is null ? LyricsStatus.NotFound : lyrics.IsInstrumental ? LyricsStatus.Instrumental : LyricsStatus.Ready);
+        ApplyState(); // the compact island widens for the live line
+    }
+
+    private void SetLyricsStatus(LyricsStatus status)
+    {
+        _lyricsStatus = status;
+        LyricsHeader.Text = _media.Title.Length > 0 ? $"Lirik · {_media.Title}" : "Lirik";
+        LyricsSource.Text = status == LyricsStatus.Ready ? (_lyrics!.IsSynced ? "LRCLIB" : "LRCLIB · tanpa sinkron") : "";
+        LyricsMessage.Text = status switch
+        {
+            LyricsStatus.Loading => "Mencari lirik…",
+            LyricsStatus.NotFound => "Lirik tidak ditemukan",
+            LyricsStatus.Instrumental => "♪  Instrumental",
+            LyricsStatus.Offline => "Lirik tidak bisa dimuat (offline?)",
+            _ => "",
+        };
+        LyricsMessage.Visibility = LyricsMessage.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BuildLyricLines()
+    {
+        LyricsLines.Children.Clear();
+        _lyricIndex = -2;
+        if (!HasLyricLines) return;
+
+        foreach (var line in _lyrics!.Lines)
+        {
+            LyricsLines.Children.Add(new TextBlock
+            {
+                Text = line.Text,
+                Tag = line,
+                FontSize = 16,
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 3, 0, 3),
+                Opacity = 0.3,
+                Cursor = _lyrics.IsSynced ? Cursors.Hand : null,
+            });
+        }
+        _lyricsScroll.Snap(LyricsViewport.Height * 0.4);
+    }
+
+    /// <summary>
+    /// Moves the highlight to the line being sung and arms a one-shot timer for exactly when the next
+    /// line starts — no fixed-rate ticking. Runs only while lyrics are on screen.
+    /// </summary>
+    private void ScheduleLyricTick()
+    {
+        _lyricTimer.Stop();
+        bool onScreen = HasLyricLines && ((_view == View.Compact && ShowsCompactLyric) || (_view == View.Expanded && _page == Page.Lyrics));
+        if (!onScreen) return;
+
+        UpdateLyricHighlight();
+        if (!_media.IsPlaying) return;
+
+        var lines = _lyrics!.Lines;
+        int next = _lyricIndex + 1;
+        var wait = next < lines.Count ? lines[next].Time - (_media.Position + LyricLead) : TimeSpan.FromSeconds(1);
+        // Never sleep longer than a second, so seeks in the player itself are picked up quickly too.
+        _lyricTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(wait.TotalMilliseconds, 40, 1000));
+        _lyricTimer.Start();
+    }
+
+    private void UpdateLyricHighlight()
+    {
+        var lines = _lyrics!.Lines;
+        int index = _lyrics.IndexAt(_media.Position + LyricLead);
+        if (index == _lyricIndex) return;
+
+        int previous = _lyricIndex;
+        _lyricIndex = index;
+
+        // Karaoke page: dim the old line, light up the new one and roll it to the middle.
+        var fade = TimeSpan.FromMilliseconds(220);
+        if (previous >= 0 && previous < LyricsLines.Children.Count)
+            LyricsLines.Children[previous].BeginAnimation(OpacityProperty, new DoubleAnimation(0.3, fade));
+        if (index >= 0 && index < LyricsLines.Children.Count)
+        {
+            var current = (FrameworkElement)LyricsLines.Children[index];
+            current.BeginAnimation(OpacityProperty, new DoubleAnimation(1, fade));
+            if (current.ActualHeight <= 0) LyricsLines.UpdateLayout();
+            double top = current.TranslatePoint(new Point(0, 0), LyricsLines).Y;
+            double target = LyricsViewport.Height * 0.42 - (top + current.ActualHeight / 2);
+            if (previous == -2) _lyricsScroll.Snap(target);
+            else _lyricsScroll.AnimateTo(target, response: 0.55, dampingRatio: 0.9);
+        }
+
+        // Compact island: swap the line with a quick rise-and-fade.
+        string text = index >= 0 ? lines[index].Text : "♪";
+        if (CompactLyric.Text == text) return;
+        CompactLyric.Text = text;
+        if (previous == -2) return;
+        var rise = TimeSpan.FromMilliseconds(260);
+        CompactLyric.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, rise));
+        CompactLyricShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(6, 0, rise) { EasingFunction = Ease });
     }
 
     // ───────────────────────────── timer ─────────────────────────────
@@ -1519,6 +1706,9 @@ public partial class IslandWindow : Window
         MenuTracks.IsChecked = _settings.ShowTrackChanges;
         MenuDevices.IsChecked = _settings.ShowDeviceChanges;
         MenuPrivacy.IsChecked = _settings.ShowPrivacy;
+        MenuLyrics.IsChecked = _settings.ShowLyrics;
+        MenuCompactLyrics.IsChecked = _settings.CompactLyrics;
+        MenuCompactLyrics.IsEnabled = _settings.ShowLyrics;
         MenuStartup.IsChecked = AppSettings.StartWithWindows;
     }
 
@@ -1549,6 +1739,21 @@ public partial class IslandWindow : Window
         _settings.ShowPrivacy = !_settings.ShowPrivacy;
         _settings.Save();
         UpdatePrivacyDots();
+        ApplyState();
+    }
+
+    private void MenuLyrics_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowLyrics = !_settings.ShowLyrics;
+        _settings.Save();
+        LoadLyrics();
+        ApplyState();
+    }
+
+    private void MenuCompactLyrics_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.CompactLyrics = !_settings.CompactLyrics;
+        _settings.Save();
         ApplyState();
     }
 

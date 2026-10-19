@@ -14,13 +14,19 @@ karena mesin CI tidak memutar media.</sub>
 ## Fitur
 
 - **Carousel**: island yang terbuka berisi halaman-halaman yang bisa digeser, dengan titik
-  pagination ala iOS: 🎵 **Musik** (kalau ada media) → ⏱ **Timer** → 📅 **Hari ini** →
-  📥 **Titipan** (kalau ada file). Geser dengan **Shift + scroll**, swipe dua jari ke samping di
-  touchpad, klik-tarik (atau swipe di layar sentuh), atau klik titiknya. Halaman bisa "dilempar",
-  memantul di ujung, halaman samping mengecil dan memudar, dan tinggi island ikut menyesuaikan.
-- **Scroll untuk volume**: scroll di atas island (kecil maupun terbuka) untuk naik/turun volume
-  2% per langkah; klik tengah (klik roda mouse) untuk mute. Saat island terbuka, bar volume kecil
-  muncul di tempat titik pagination.
+  pagination ala iOS: 🎵 **Musik** → 🎤 **Lirik** (kalau ada media) → ⏱ **Timer** → 📅 **Hari ini** →
+  📥 **Titipan** (kalau ada file). Geser dengan **scroll**, swipe dua jari ke samping di touchpad,
+  klik-tarik (atau swipe di layar sentuh), atau klik titiknya. Halaman bisa "dilempar", memantul di
+  ujung, halaman samping mengecil dan memudar, dan tinggi island ikut menyesuaikan.
+- **Shift + scroll untuk volume**: di atas island (kecil maupun terbuka), 2% per langkah; klik
+  tengah (klik roda mouse) untuk mute. Saat island terbuka, bar volume kecil muncul di tempat titik
+  pagination.
+- **Lirik lagu** (Spotify, YouTube Music, Apple Music, dll.): halaman 🎤 Lirik bergaya karaoke —
+  baris yang sedang dinyanyikan menyala dan bergulir otomatis, klik sebuah baris untuk loncat ke
+  bagian itu. Saat island kecil, baris lirik yang sedang dinyanyikan tampil langsung di island.
+  Lirik diambil dari [LRCLIB](https://lrclib.net) (database lirik komunitas, gratis, tersinkron)
+  berdasarkan judul/artis/album/durasi, karena Spotify tidak menyediakan API lirik untuk aplikasi
+  lain. Bisa dimatikan di klik kanan → **Lirik**.
 - **Titipan file (seperti NotchDrop)**: seret file atau folder ke island — island membuka area drop
   dengan garis putus-putus yang bergerak. File muncul sebagai thumbnail di halaman Titipan; seret
   keluar ke folder/aplikasi mana pun (ikon di judul = bawa semua sekaligus), klik untuk membuka,
@@ -51,8 +57,8 @@ karena mesin CI tidak memutar media.</sub>
 - Tidak mencuri fokus saat diklik dan tidak muncul di taskbar maupun Alt+Tab.
 
 Klik kanan island untuk menu: **Timer**, gaya island/notch, **Notifikasi** (volume, lagu baru,
-perangkat audio, mikrofon & kamera — masing-masing bisa dimatikan), jalankan saat Windows mulai,
-dan keluar.
+perangkat audio, mikrofon & kamera — masing-masing bisa dimatikan), **Lirik**, jalankan saat
+Windows mulai, dan keluar.
 
 ## Kenapa ringan
 
@@ -69,6 +75,7 @@ dan keluar.
 | Update tampilan | Hanya untuk halaman yang sedang terlihat (jam, progress lagu, hitung mundur) |
 | Carousel | Pegas yang hanya terhubung ke render loop selama halaman bergeser |
 | Titipan file | Hanya path yang disimpan; thumbnail diambil sekali dari Explorer saat tampil |
+| Lirik | Satu request per lagu (di-cache); baris berikutnya dijadwalkan tepat saat mulai, bukan dicek terus-menerus |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).
@@ -131,6 +138,7 @@ src/DynamicIsland/
 │  ├─ PrivacyMonitor.cs     Aplikasi yang sedang memakai mikrofon / kamera
 │  ├─ TimerService.cs       Timer & Pomodoro
 │  ├─ ShelfService.cs       Daftar file titipan (shelf.json)
+│  ├─ LyricsService.cs      Lirik tersinkron dari LRCLIB + parser LRC
 │  └─ ShellHooks.cs         Notifikasi fullscreen, daya, dan perubahan layar
 ├─ Interop/                 Deklarasi Win32, Core Audio & thumbnail Explorer
 └─ AppSettings.cs           Pengaturan (%AppData%\DynamicIsland\settings.json) & autostart
@@ -151,6 +159,8 @@ tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, a
 - Popup volume bawaan Windows tetap muncul bersamaan dengan indikator di island.
 - Indikator mikrofon/kamera membaca catatan privasi Windows, jadi aplikasi yang izinnya dimatikan
   di Settings → Privacy tidak akan terdeteksi (karena memang tidak bisa memakai perangkatnya).
+- Lirik hanya tersedia untuk lagu yang ada di LRCLIB; judul/artis/album lagu yang diputar dikirim
+  ke lrclib.net untuk mencarinya (matikan di klik kanan → Lirik kalau tidak mau).
 - Notifikasi aplikasi (WhatsApp, email, dll.) belum didukung, karena API pembacanya mengharuskan
   aplikasi dipaketkan sebagai MSIX.
 - Log error (kalau ada) tersimpan di `%AppData%\DynamicIsland\error.log`.

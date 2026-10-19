@@ -42,6 +42,10 @@
                         <MenuItem x:Name="MenuDevices" Header="Ganti perangkat audio" Click="MenuDevices_Click" />
                         <MenuItem x:Name="MenuPrivacy" Header="Mikrofon &amp; kamera aktif" Click="MenuPrivacy_Click" />
                     </MenuItem>
+                    <MenuItem Header="Lirik">
+                        <MenuItem x:Name="MenuLyrics" Header="Tampilkan lirik (lrclib.net)" Click="MenuLyrics_Click" />
+                        <MenuItem x:Name="MenuCompactLyrics" Header="Lirik di island ringkas" Click="MenuCompactLyrics_Click" />
+                    </MenuItem>
                     <MenuItem x:Name="MenuStartup" Header="Jalankan saat Windows mulai" Click="MenuStartup_Click" />
                     <Separator />
                     <MenuItem Header="Keluar" Click="MenuExit_Click" />
@@ -77,6 +81,11 @@
 
                     <!-- Compact: left slot = artwork or timer ring, right slot = equalizer and/or countdown -->
                     <Grid x:Name="CompactView" VerticalAlignment="Top" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                         <Grid HorizontalAlignment="Left" VerticalAlignment="Center" Margin="5,0,0,0">
                             <Border x:Name="CompactArt" Style="{StaticResource Artwork}" Width="22" Height="22" CornerRadius="6">
                                 <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="11" />
@@ -84,7 +93,15 @@
                             <c:ProgressRing x:Name="CompactRing" Width="18" Height="18" Margin="4,0,0,0" Thickness="2.6"
                                             RingBrush="{StaticResource TimerBrush}" Visibility="Collapsed" />
                         </Grid>
-                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Margin="0,0,13,0">
+                        <!-- Live lyrics: the line being sung right now -->
+                        <TextBlock x:Name="CompactLyric" Grid.Column="1" Margin="10,0,10,0" FontSize="12.5" FontWeight="SemiBold"
+                                   TextAlignment="Center" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                   Visibility="Collapsed">
+                            <TextBlock.RenderTransform>
+                                <TranslateTransform x:Name="CompactLyricShift" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                        <StackPanel Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Margin="0,0,13,0">
                             <StackPanel x:Name="CompactShelfBadge" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,9,0"
                                         Background="Transparent" Cursor="Hand" Visibility="Collapsed"
                                         MouseLeftButtonUp="ShelfBadge_MouseLeftButtonUp">
@@ -264,6 +281,47 @@
                                                 </Viewbox>
                                             </Button>
                                         </StackPanel>
+                                    </Grid>
+                                </Grid>
+
+                                <!-- Page: lyrics, karaoke style (LRCLIB) -->
+                                <Grid x:Name="LyricsPage" Width="400" Height="168" VerticalAlignment="Top">
+                                    <Grid Margin="24,16,24,0" VerticalAlignment="Top">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Viewbox Width="14" Height="14" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                <Grid Width="16" Height="16">
+                                                    <Path Data="{StaticResource IconMicBody}" Fill="{StaticResource MicBrush}" />
+                                                    <Path Data="{StaticResource IconMicStand}" Style="{StaticResource StrokeIcon}" Stroke="{StaticResource MicBrush}" />
+                                                </Grid>
+                                            </Viewbox>
+                                            <TextBlock x:Name="LyricsHeader" Grid.Column="1" FontSize="13" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="LyricsSource" Grid.Column="2" FontSize="11" Margin="10,0,0,0"
+                                                       Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <!-- Lines roll upwards; the mask fades them out at the top and bottom edge -->
+                                        <Grid x:Name="LyricsViewport" Grid.Row="1" Height="122" Margin="0,8,0,0" ClipToBounds="True" Background="Transparent">
+                                            <Grid.OpacityMask>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                    <GradientStop Offset="0" Color="#00000000" />
+                                                    <GradientStop Offset="0.2" Color="#FF000000" />
+                                                    <GradientStop Offset="0.8" Color="#FF000000" />
+                                                    <GradientStop Offset="1" Color="#00000000" />
+                                                </LinearGradientBrush>
+                                            </Grid.OpacityMask>
+                                            <StackPanel x:Name="LyricsLines" VerticalAlignment="Top" />
+                                            <TextBlock x:Name="LyricsMessage" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Grid>
                                     </Grid>
                                 </Grid>
 

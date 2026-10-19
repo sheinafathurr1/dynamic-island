@@ -35,6 +35,8 @@ internal sealed class AppSettings
     public bool ShowTrackChanges { get; set; } = true;
     public bool ShowDeviceChanges { get; set; } = true;
     public bool ShowPrivacy { get; set; } = true;
+    public bool ShowLyrics { get; set; } = true;
+    public bool CompactLyrics { get; set; } = true;
 
     public static AppSettings Load()
     {
