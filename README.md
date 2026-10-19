@@ -1,15 +1,15 @@
 # Dynamic Island untuk Windows
 
 Island / notch ala iPhone & MacBook di bagian atas layar Windows. Dibuat native (C# WPF, .NET 10)
-supaya **ringan**: tidak ada Electron atau browser tersembunyi, tidak ada polling, dan tidak ada render
-saat island diam.
+supaya **ringan**: tidak ada Electron atau browser tersembunyi, hampir semuanya digerakkan event dari
+Windows, dan tidak ada render saat island diam.
 
 <p align="center">
   <img src="docs/preview.png" alt="Tangkapan layar Dynamic Island di Windows: idle, timer, jam, alarm, gaya notch, dan menu klik kanan" width="520">
 </p>
 
-<sub>Tangkapan layar asli dari tes UI otomatis di GitHub Actions (Windows). Panel musik tidak ikut
-karena mesin CI tidak memutar media.</sub>
+<sub>Tangkapan layar asli dari tes UI otomatis di GitHub Actions (Windows). Musiknya sesi media
+buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendanya file iCal contoh.</sub>
 
 ## Fitur
 
@@ -36,10 +36,22 @@ karena mesin CI tidak memutar media.</sub>
   kontrol media Windows. Mode ringkas menampilkan cover album + equalizer yang warnanya diambil dari
   cover. Hover atau klik untuk membuka panel penuh: judul, artis, progress bar (bisa diklik untuk
   *seek*), serta tombol previous / play-pause / next.
+- **Equalizer mengikuti suara asli**: batang equalizer bergerak sesuai musik yang benar-benar keluar
+  dari speaker/headphone (bass, mid, treble), bukan animasi rekaman. Yang didengar hanya output
+  audio (*loopback*), tidak pernah mikrofon, dan tidak ada yang disimpan. Kalau tidak ada suara
+  (player di-mute, atau musik keluar di perangkat lain) equalizer kembali ke animasi biasa.
+- **Island ringkas yang hidup**: garis tipis berwarna cover di pinggir island yang "bernapas"
+  mengikuti dentuman bass, dan baris lirik yang bergulir naik saat berganti.
+- **Notifikasi aplikasi**: pesan WhatsApp, Discord, Telegram, email, dll. muncul sebentar di island
+  dengan foto pengirim (kalau aplikasinya menyertakan), ikon dan nama aplikasi. Klik untuk membuka
+  aplikasinya; arahkan kursor untuk menahannya. Mengikuti aturan Windows: tidak muncul saat
+  *Do not disturb* / Fokus aktif atau untuk aplikasi yang notifikasinya dimatikan. Isi pesan bisa
+  disembunyikan (klik kanan → Notifikasi → Tampilkan isi pesan).
 - **Lagu baru**: notifikasi singkat berisi cover, judul, dan artis setiap kali lagu berganti.
 - **Timer & Pomodoro**: mulai dari halaman Timer (5–45 menit) atau menu klik kanan (1–60 menit).
   Island ringkas menampilkan ring hitung mundur + sisa waktu (berdampingan dengan cover kalau musik
-  jalan). Di halaman Timer ada pause, +1 menit, dan stop. Saat waktu habis island berdenyut dan
+  jalan). Halaman Timer punya ring yang menyala dengan titik terang di ujungnya, jam selesainya, serta
+  pause, +1 menit, dan stop; 10 detik terakhir berubah merah. Saat waktu habis island berdenyut dan
   berbunyi; klik untuk menutup.
 - **Indikator mikrofon & kamera**: titik oranye (mikrofon) dan hijau (kamera) seperti iPhone,
   plus notifikasi berisi nama aplikasi yang memakainya (Zoom, Discord, Chrome, dll.).
@@ -48,24 +60,26 @@ karena mesin CI tidak memutar media.</sub>
 - **Volume**: indikator volume & mute saat volume diubah (tombol keyboard, tray, atau aplikasi).
 - **Baterai**: "Mengisi daya" saat charger dicolok, "Menggunakan baterai" saat dicabut,
   "Baterai lemah" ketika baterai turun ke 20% dan 10%, serta status penghemat baterai (kuning).
-- **Hari ini**: jam, tanggal, kalender minggu ini (hari ini dilingkari), baterai, dan perangkat
-  audio yang sedang dipakai.
+- **Hari ini**: jam, tanggal, baterai, perangkat audio, kalender minggu ini (hari ini dilingkari),
+  dan **agenda**: acara yang sedang/akan berlangsung hari ini dan besok, plus titik di hari yang ada
+  acaranya. Agenda diambil dari link iCal Google Calendar, Outlook, atau iCloud (klik kanan →
+  **Kalender**, atau klik kartu agendanya), diperbarui tiap 15 menit, termasuk acara berulang.
 - **Dua gaya**: *Island* (pil melayang) atau *Notch* (menempel di tepi atas dengan lekukan seperti
   MacBook).
 - **Otomatis sembunyi** saat ada aplikasi fullscreen (game, video, presentasi).
 - Animasi pegas (*spring*) dengan sedikit pantulan seperti aslinya, tajam di semua skala DPI.
 - Tidak mencuri fokus saat diklik dan tidak muncul di taskbar maupun Alt+Tab.
 
-Klik kanan island untuk menu: **Timer**, gaya island/notch, **Notifikasi** (volume, lagu baru,
-perangkat audio, mikrofon & kamera — masing-masing bisa dimatikan), **Lirik**, jalankan saat
-Windows mulai, dan keluar.
+Klik kanan island untuk menu: **Timer**, **Kalender**, gaya island/notch, **Notifikasi** (volume,
+lagu baru, perangkat audio, mikrofon & kamera, notifikasi aplikasi — masing-masing bisa dimatikan),
+**Musik** (lirik, equalizer suara asli, garis warna cover), jalankan saat Windows mulai, dan keluar.
 
 ## Kenapa ringan
 
 | Bagian | Cara kerjanya |
 | --- | --- |
 | Animasi bentuk | Simulasi pegas yang hanya terhubung ke render loop **selama bergerak**, lalu lepas lagi |
-| Equalizer | 30 fps, dan hanya saat musik diputar **dan** terlihat di layar |
+| Equalizer | 30 fps, dan hanya saat musik diputar **dan** terlihat di layar; pendengar audio (loopback + FFT kecil) juga hanya aktif saat itu, dan bisa dimatikan |
 | Media | Event dari `GlobalSystemMediaTransportControls`, tanpa polling |
 | Volume | Callback Core Audio (`IAudioEndpointVolumeCallback`), tanpa polling |
 | Baterai | Pesan `WM_POWERBROADCAST` dari Windows, tanpa polling |
@@ -76,6 +90,8 @@ Windows mulai, dan keluar.
 | Carousel | Pegas yang hanya terhubung ke render loop selama halaman bergeser |
 | Titipan file | Hanya path yang disimpan; thumbnail diambil sekali dari Explorer saat tampil |
 | Lirik | Satu request per lagu (di-cache); baris berikutnya dijadwalkan tepat saat mulai, bukan dicek terus-menerus |
+| Notifikasi aplikasi | Dibaca saat file database notifikasi Windows berubah, plus satu query kecil tiap 3 detik sebagai cadangan |
+| Kalender | Satu unduhan file iCal tiap 15 menit; acara berulang dihitung dalam milidetik |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).
@@ -127,7 +143,7 @@ src/DynamicIsland/
 │  ├─ SpringValue.cs        Satu nilai berpegas (posisi carousel)
 │  └─ IslandAnimator.cs     Morph lebar, tinggi, dan sudut island
 ├─ Controls/
-│  ├─ EqualizerBars.cs      Animasi gelombang "now playing"
+│  ├─ EqualizerBars.cs      Gelombang "now playing" (suara asli atau animasi)
 │  ├─ ProgressRing.cs       Ring hitung mundur timer
 │  └─ BatteryIcon.cs        Ikon baterai ala iOS
 ├─ Services/
@@ -139,8 +155,15 @@ src/DynamicIsland/
 │  ├─ TimerService.cs       Timer & Pomodoro
 │  ├─ ShelfService.cs       Daftar file titipan (shelf.json)
 │  ├─ LyricsService.cs      Lirik tersinkron dari LRCLIB + parser LRC
+│  ├─ AudioSpectrum.cs      Mendengarkan output audio (WASAPI loopback) untuk equalizer
+│  ├─ SpectrumAnalyzer.cs   FFT → level bass / mid / treble dengan gain otomatis
+│  ├─ NotificationWatcher.cs  Notifikasi aplikasi lain dari database notifikasi Windows
+│  ├─ ToastPayload.cs       Membaca isi XML notifikasi toast
+│  ├─ CalendarService.cs    Mengambil & memperbarui feed iCal
+│  ├─ IcsCalendar.cs        Parser iCal: zona waktu, acara seharian, acara berulang
 │  └─ ShellHooks.cs         Notifikasi fullscreen, daya, dan perubahan layar
-├─ Interop/                 Deklarasi Win32, Core Audio & thumbnail Explorer
+├─ CalendarDialog.xaml(.cs) Jendela untuk menempel link iCal
+├─ Interop/                 Deklarasi Win32, Core Audio, SQLite bawaan Windows & thumbnail Explorer
 └─ AppSettings.cs           Pengaturan (%AppData%\DynamicIsland\settings.json) & autostart
 tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, ambil screenshot)
 ```
@@ -161,6 +184,13 @@ tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, a
   di Settings → Privacy tidak akan terdeteksi (karena memang tidak bisa memakai perangkatnya).
 - Lirik hanya tersedia untuk lagu yang ada di LRCLIB; judul/artis/album lagu yang diputar dikirim
   ke lrclib.net untuk mencarinya (matikan di klik kanan → Lirik kalau tidak mau).
-- Notifikasi aplikasi (WhatsApp, email, dll.) belum didukung, karena API pembacanya mengharuskan
-  aplikasi dipaketkan sebagai MSIX.
+- Notifikasi aplikasi dibaca dari database notifikasi Windows, karena API resminya hanya untuk
+  aplikasi yang dipaketkan sebagai MSIX. Formatnya tidak didokumentasikan, jadi update Windows bisa
+  saja mengubahnya; kalau itu terjadi, fitur ini diam saja (tidak mengganggu fitur lain). Klik
+  notifikasi membuka aplikasinya, belum langsung ke chat tertentu.
+- Aplikasi Kalender bawaan Windows sudah dihentikan Microsoft dan Outlook baru tidak membagikan
+  agendanya ke aplikasi lain, jadi agenda memakai link iCal. Link itu rahasia: hanya disimpan di
+  `settings.json` di PC ini.
+- Equalizer suara asli mendengarkan perangkat output default; kalau Spotify diarahkan ke perangkat
+  lain, equalizer memakai animasi biasa.
 - Log error (kalau ada) tersimpan di `%AppData%\DynamicIsland\error.log`.
