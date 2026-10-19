@@ -27,6 +27,37 @@
             <Setter Property="Margin" Value="16,6,16,0" />
         </Style>
         <Style TargetType="CheckBox" BasedOn="{StaticResource SwitchRow}" />
+
+        <!-- Slim dark scroll bar instead of Windows' light one -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="12" />
+            <Setter Property="MinWidth" Value="12" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="Bar" Background="#47FFFFFF" CornerRadius="2.5" Width="5" Margin="0,2,4,2" HorizontalAlignment="Right" />
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bar" Property="Background" Value="#80FFFFFF" />
+                                                </Trigger>
+                                                <Trigger Property="IsDragging" Value="True">
+                                                    <Setter TargetName="Bar" Property="Background" Value="#99FFFFFF" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource MenuBorder}" BorderThickness="1" CornerRadius="18">
