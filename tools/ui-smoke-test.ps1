@@ -187,6 +187,81 @@ function Save-CenterShot([string]$Name, [int]$Width, [int]$Height) {
     Emit-Shot $Name
 }
 
+# What Windows did with the test toast: its own banner (bottom right), the notification settings,
+# Do not disturb, and the newest rows of the notification database the island reads.
+function Show-NotificationDiagnostics {
+    $bitmap = [SmokeInput]::Capture($screen.Right - 460, $screen.Bottom - 300, 460, 300)
+    $bitmap.Save((Join-Path $OutDir "22b-windows-toast.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $bitmap.Dispose()
+    Emit-Shot "22b-windows-toast"
+    foreach ($key in @("HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications",
+                       "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
+                       "HKCU:\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe")) {
+        $values = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+        Write-Host "$key -> $(if ($values) { ($values.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join '; ' } else { 'missing' })"
+    }
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class WpnProbe
+{
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_open_v2(byte[] file, out IntPtr db, int flags, IntPtr vfs);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_prepare_v2(IntPtr db, byte[] sql, int bytes, out IntPtr statement, IntPtr tail);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_step(IntPtr statement);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern IntPtr sqlite3_column_text(IntPtr statement, int column);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_column_count(IntPtr statement);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern IntPtr sqlite3_errmsg(IntPtr db);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_finalize(IntPtr statement);
+    [DllImport("winsqlite3.dll", CallingConvention = CallingConvention.StdCall)] static extern int sqlite3_close_v2(IntPtr db);
+    [DllImport("ntdll.dll")] static extern int NtQueryWnfStateData(ref ulong name, IntPtr type, IntPtr scope, out uint stamp, byte[] buffer, ref uint size);
+
+    static byte[] Utf8(string text) { return Encoding.UTF8.GetBytes(text + "\0"); }
+    static string Text(IntPtr p) { if (p == IntPtr.Zero) return ""; int n = 0; while (Marshal.ReadByte(p, n) != 0) n++; var b = new byte[n]; Marshal.Copy(p, b, 0, n); return Encoding.UTF8.GetString(b); }
+
+    public static string Query(string path, string sql)
+    {
+        var output = new StringBuilder();
+        IntPtr db;
+        int rc = sqlite3_open_v2(Utf8(path), out db, 1, IntPtr.Zero);
+        if (rc != 0) return "open failed: " + rc;
+        IntPtr statement;
+        rc = sqlite3_prepare_v2(db, Utf8(sql), -1, out statement, IntPtr.Zero);
+        if (rc != 0) { output.Append("prepare failed: " + rc + " " + Text(sqlite3_errmsg(db))); sqlite3_close_v2(db); return output.ToString(); }
+        while ((rc = sqlite3_step(statement)) == 100)
+        {
+            for (int i = 0; i < sqlite3_column_count(statement); i++)
+            {
+                string value = Text(sqlite3_column_text(statement, i)).Replace("\r", " ").Replace("\n", " ");
+                output.Append(i == 0 ? "  " : " | ").Append(value.Length > 400 ? value.Substring(0, 400) + "..." : value);
+            }
+            output.AppendLine();
+        }
+        output.Append("  (step ended with " + rc + ")");
+        sqlite3_finalize(statement);
+        sqlite3_close_v2(db);
+        return output.ToString();
+    }
+
+    public static string QuietHours()
+    {
+        ulong name = 0x0D83063EA3BF1C75;
+        var buffer = new byte[32];
+        uint size = (uint)buffer.Length, stamp;
+        int status = NtQueryWnfStateData(ref name, IntPtr.Zero, IntPtr.Zero, out stamp, buffer, ref size);
+        return "status 0x" + status.ToString("X8") + ", " + size + " bytes: " + BitConverter.ToString(buffer, 0, (int)Math.Min(size, (uint)buffer.Length));
+    }
+}
+"@
+    Write-Host "Quiet hours (Do not disturb) state: $([WpnProbe]::QuietHours())"
+    $db = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Notifications\wpndatabase.db"
+    Write-Host "Now as FILETIME: $([DateTime]::UtcNow.ToFileTimeUtc())"
+    Write-Host "Notification table:"
+    Write-Host ([WpnProbe]::Query($db, "SELECT sql FROM sqlite_master WHERE name IN ('Notification', 'NotificationHandler')"))
+    Write-Host "Newest notifications:"
+    Write-Host ([WpnProbe]::Query($db, "SELECT n.Id, n.Type, h.PrimaryId, n.ArrivalTime, n.ExpiryTime, CAST(n.Payload AS TEXT) FROM Notification n LEFT JOIN NotificationHandler h ON h.RecordId = n.HandlerId ORDER BY n.Id DESC LIMIT 6"))
+}
+
 # Like Find-ByName, but for checks that depend on the runner: $null instead of failing.
 function Try-FindByName([string]$Name, [int]$TimeoutSeconds = 6) {
     try { return Find-ByName $Name $TimeoutSeconds } catch { return $null }
@@ -529,7 +604,8 @@ if (Try-FindByName "Rina" 8) {
     Write-Host "Notification: shown in the island"
 } else {
     Save-Shot "22-notification"
-    Write-Host "Notification: not shown (no notification service on this runner?)"
+    Write-Host "Notification: not shown in the island; diagnostics:"
+    Show-NotificationDiagnostics
 }
 Move-Away
 Start-Sleep -Seconds 6
