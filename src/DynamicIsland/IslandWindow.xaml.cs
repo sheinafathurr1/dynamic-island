@@ -122,6 +122,7 @@ public partial class IslandWindow : Window
     private readonly DispatcherTimer _liveTimer = new();
     private readonly DispatcherTimer _dropLeaveTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
     private readonly DispatcherTimer _hudTimer = new() { Interval = TimeSpan.FromMilliseconds(1300) };
+    private readonly DispatcherTimer _fullscreenCheck = new() { Interval = TimeSpan.FromSeconds(1.5) };
     private readonly DispatcherTimer _lyricTimer = new();
     private readonly DispatcherTimer _visualTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
     private readonly SpringValue _lyricsScroll;
@@ -252,6 +253,13 @@ public partial class IslandWindow : Window
             EndDropHover();
         };
         _hudTimer.Tick += (_, _) => HideVolumeHud();
+
+        // Safety net while hidden for a full-screen app: come back even if Windows never says it ended
+        // (short-lived full-screen layers such as the screenshot dimmer can leave that unsaid).
+        _fullscreenCheck.Tick += (_, _) =>
+        {
+            if (!Native.IsForegroundFullscreen(_hwnd)) OnFullscreenChanged(false);
+        };
         _lyricTimer.Tick += (_, _) => ScheduleLyricTick();
         _visualTimer.Tick += OnVisualTick;
 
@@ -453,9 +461,11 @@ public partial class IslandWindow : Window
             _expanded = false;
             Hide();
             ConfigureVisuals();
+            _fullscreenCheck.Start();
         }
         else
         {
+            _fullscreenCheck.Stop();
             Show();
             Native.BringToTopmost(_hwnd);
             Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(250)));
@@ -580,7 +590,7 @@ public partial class IslandWindow : Window
         Page.Lyrics => 168,
         Page.Timer => 100,
         Page.Controls => 112,
-        Page.System => 146,
+        Page.System => 166,
         Page.Shelf => 134,
         _ => _settings.ShowWeather ? 202 : 164, // today, with or without the weather row
     };
@@ -1971,7 +1981,7 @@ public partial class IslandWindow : Window
     /// <summary>A new screenshot (big thumbnail) or a finished download (its icon): drag it out, open it, show it, or keep it on the shelf.</summary>
     private void ShowFile(string path, bool screenshot)
     {
-        if (_hiddenForFullscreen || !System.IO.File.Exists(path)) return;
+        if (!System.IO.File.Exists(path)) return; // while hidden for full screen it waits: shown when the island returns
         _filePath = path;
         long size = 0;
         try

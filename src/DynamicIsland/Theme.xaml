@@ -184,7 +184,7 @@
         <Setter Property="Background" Value="{StaticResource CardBrush}" />
         <Setter Property="CornerRadius" Value="12" />
         <Setter Property="Padding" Value="11,7,11,7" />
-        <Setter Property="Height" Value="58" />
+        <Setter Property="Height" Value="68" />
     </Style>
     <Style x:Key="StatLabel" TargetType="TextBlock">
         <Setter Property="FontSize" Value="10.5" />

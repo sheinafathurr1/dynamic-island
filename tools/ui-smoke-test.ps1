@@ -864,16 +864,57 @@ Set-CallTimes $callStart ([DateTime]::UtcNow.ToFileTimeUtc())
 Start-Sleep -Milliseconds 2000
 [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($callKey, $false)
 
-# ── Screenshot preview: Win+PrtSc saves the screen to Pictures\Screenshots ─────────────────────
-[SmokeInput]::Chord(0x5B, 0x2C)
-if (-not (Try-FindByName "Screenshot" 6)) {
-    Write-Host "Win+PrtSc saved nothing on this runner; dropping a picture into the Screenshots folder instead"
-    $screenshots = Join-Path ([Environment]::GetFolderPath("MyPictures")) "Screenshots"
-    Copy-Item $cover (Join-Path $screenshots "Screenshot test.png")
-    if (-not (Try-FindByName "Screenshot" 6)) { throw "No screenshot preview" }
+# ── Screenshot preview, both ways a screenshot arrives ─────────────────────────────────────────
+# 1) On the clipboard with no owner window, like the classic PrtSc key (Snipping Tool works the same
+#    way, under its own name).
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+public static class ClipboardShot
+{
+    [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr owner);
+    [DllImport("user32.dll")] static extern bool EmptyClipboard();
+    [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint format, IntPtr data);
+    [DllImport("user32.dll")] static extern bool CloseClipboard();
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint flags, UIntPtr bytes);
+    [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr memory);
+    [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr memory);
+
+    // A .bmp file minus its 14-byte file header is exactly a CF_DIB.
+    public static bool Put(string bmpPath)
+    {
+        byte[] file = File.ReadAllBytes(bmpPath);
+        IntPtr memory = GlobalAlloc(0x0002, (UIntPtr)(file.Length - 14));
+        Marshal.Copy(file, 14, GlobalLock(memory), file.Length - 14);
+        GlobalUnlock(memory);
+        if (!OpenClipboard(IntPtr.Zero)) return false;
+        EmptyClipboard();
+        SetClipboardData(8, memory);
+        CloseClipboard();
+        return true;
+    }
 }
+"@
+$capture = [SmokeInput]::Capture(0, 0, 640, 400)
+$capturePath = Join-Path $files "capture.bmp"
+$capture.Save($capturePath, [System.Drawing.Imaging.ImageFormat]::Bmp)
+$capture.Dispose()
+Write-Host "Screenshot on the clipboard: $([ClipboardShot]::Put($capturePath))"
+if (-not (Try-FindByName "Screenshot" 6)) { throw "No preview for a screenshot on the clipboard" }
 Start-Sleep -Milliseconds 600
 Save-Shot "31-screenshot"
+$copies = Join-Path $env:LOCALAPPDATA "DynamicIsland\Screenshots"
+Write-Host "Saved clipboard screenshots: $((Get-ChildItem $copies -Filter *.png -ErrorAction SilentlyContinue | Measure-Object).Count)"
+Move-Away
+Start-Sleep -Seconds 7
+
+# 2) A new file in Pictures\Screenshots, like Win+PrtSc or Snipping Tool's auto-save.
+$screenshots = (New-Object -ComObject Shell.Application).NameSpace('shell:Screenshots').Self.Path
+Write-Host "Screenshots folder: $screenshots"
+Copy-Item $cover (Join-Path $screenshots "Screenshot 2026-10-19 101500.png")
+if (-not (Try-FindByName "Screenshot" 6)) { throw "No preview for a new file in the Screenshots folder" }
+Write-Host "Screenshot previews: clipboard and folder both shown"
 Move-Away
 Start-Sleep -Seconds 7
 

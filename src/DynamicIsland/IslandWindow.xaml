@@ -651,7 +651,7 @@
                                 </Grid>
 
                                 <!-- Page: system (CPU with history, memory, network speed, free disk) -->
-                                <Grid x:Name="SystemPage" Width="400" Height="146" VerticalAlignment="Top">
+                                <Grid x:Name="SystemPage" Width="400" Height="166" VerticalAlignment="Top">
                                     <Grid Margin="16,14,16,0" VerticalAlignment="Top">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -688,7 +688,7 @@
                                             <StackPanel>
                                                 <TextBlock Text="Internet" Style="{StaticResource StatLabel}" />
                                                 <TextBlock x:Name="NetDownText" Style="{StaticResource StatValue}" />
-                                                <TextBlock x:Name="NetUpText" FontSize="11" Foreground="{StaticResource SecondaryText}" Margin="0,1,0,0" />
+                                                <TextBlock x:Name="NetUpText" FontSize="11.5" Foreground="{StaticResource SecondaryText}" Margin="0,2,0,0" />
                                             </StackPanel>
                                         </Border>
                                         <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource StatTile}">
