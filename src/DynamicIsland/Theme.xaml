@@ -1,0 +1,159 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <FontFamily x:Key="UiFont">Segoe UI</FontFamily>
+
+    <SolidColorBrush x:Key="IslandBrush" Color="#FF000000" />
+    <SolidColorBrush x:Key="PrimaryText" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="SecondaryText" Color="#99FFFFFF" />
+    <SolidColorBrush x:Key="TertiaryText" Color="#66FFFFFF" />
+    <SolidColorBrush x:Key="TrackBrush" Color="#33FFFFFF" />
+    <SolidColorBrush x:Key="ArtPlaceholder" Color="#FF2A2A2D" />
+    <SolidColorBrush x:Key="ChargingBrush" Color="#FF30D158" />
+    <SolidColorBrush x:Key="WarningBrush" Color="#FFFF453A" />
+    <SolidColorBrush x:Key="MenuBackground" Color="#F21C1C1E" />
+    <SolidColorBrush x:Key="MenuBorder" Color="#24FFFFFF" />
+    <SolidColorBrush x:Key="MenuHighlight" Color="#22FFFFFF" />
+
+    <!-- Icons are drawn on a 16x16 grid and scaled with a Viewbox. -->
+    <StreamGeometry x:Key="IconPlay">M4.5,2.5 L13.5,8 L4.5,13.5 Z</StreamGeometry>
+    <GeometryGroup x:Key="IconPause">
+        <RectangleGeometry Rect="3,1.5,3.6,13" RadiusX="1.2" RadiusY="1.2" />
+        <RectangleGeometry Rect="9.4,1.5,3.6,13" RadiusX="1.2" RadiusY="1.2" />
+    </GeometryGroup>
+    <StreamGeometry x:Key="IconNext">M1.5,3 L8,8 L1.5,13 Z M8,3 L14.5,8 L8,13 Z</StreamGeometry>
+    <StreamGeometry x:Key="IconPrevious">M14.5,3 L8,8 L14.5,13 Z M8,3 L1.5,8 L8,13 Z</StreamGeometry>
+    <StreamGeometry x:Key="IconSpeaker">M1.5,5.5 L4.5,5.5 L8.5,2 L8.5,14 L4.5,10.5 L1.5,10.5 Z</StreamGeometry>
+    <StreamGeometry x:Key="IconWaveSmall">M10.8,5.6 A2.6,2.6 0 0 1 10.8,10.4</StreamGeometry>
+    <StreamGeometry x:Key="IconWaveLarge">M12.4,3.2 A5.2,5.2 0 0 1 12.4,12.8</StreamGeometry>
+    <StreamGeometry x:Key="IconMute">M11,5.5 L15.5,10.5 M15.5,5.5 L11,10.5</StreamGeometry>
+
+    <!-- Concave corner that melts the notch into the top edge of the screen.
+         One extra pixel column overlaps the island so no seam shows between the two shapes. -->
+    <StreamGeometry x:Key="NotchShoulder">M0,0 L11,0 L11,10 L10,10 A10,10 0 0 0 0,0 Z</StreamGeometry>
+
+    <Style x:Key="Artwork" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource ArtPlaceholder}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality" />
+    </Style>
+
+    <Style x:Key="ArtworkGlyph" TargetType="TextBlock">
+        <Setter Property="Text" Value="♪" />
+        <Setter Property="Foreground" Value="{StaticResource TertiaryText}" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="Segoe UI Symbol" />
+    </Style>
+
+    <Style x:Key="StrokeIcon" TargetType="Path">
+        <Setter Property="Stroke" Value="White" />
+        <Setter Property="StrokeThickness" Value="1.5" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+    </Style>
+
+    <!-- Fill + stroke of the same colour gives the solid glyphs soft, rounded corners. -->
+    <Style x:Key="SolidIcon" TargetType="Path">
+        <Setter Property="Fill" Value="White" />
+        <Setter Property="Stroke" Value="White" />
+        <Setter Property="StrokeThickness" Value="1.4" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+    </Style>
+
+    <Style x:Key="IconButton" TargetType="Button">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="999" RenderTransformOrigin="0.5,0.5">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="#1AFFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Chrome" Property="RenderTransform">
+                                <Setter.Value>
+                                    <ScaleTransform ScaleX="0.88" ScaleY="0.88" />
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.35" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Dark, rounded context menu that matches the island. -->
+    <Style TargetType="ContextMenu">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="HasDropShadow" Value="False" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{StaticResource MenuBackground}" BorderBrush="{StaticResource MenuBorder}"
+                            BorderThickness="1" CornerRadius="12" Padding="5" MinWidth="230">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="MenuItem">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Foreground" Value="{StaticResource PrimaryText}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="7" Padding="8,7,16,7">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Path x:Name="Check" Data="M1,5 L4.5,8.5 L11,1.5" Stroke="{TemplateBinding Foreground}"
+                                  StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round" VerticalAlignment="Center" Visibility="Hidden" />
+                            <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True"
+                                              VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource MenuHighlight}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{StaticResource TertiaryText}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1" Margin="10,4" Background="{StaticResource MenuBorder}" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

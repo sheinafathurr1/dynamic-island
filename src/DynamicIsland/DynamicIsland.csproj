@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- The 10.0.19041 suffix pulls in the WinRT projections (media session API). -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DynamicIsland</RootNamespace>
+    <AssemblyName>DynamicIsland</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>Dynamic Island</Product>
+    <Version>1.0.0</Version>
+
+    <!-- Lets the project build on Linux/macOS CI too; the app itself only runs on Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Keep the footprint small: no background GC thread, no satellite resource folders. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>
