@@ -217,8 +217,9 @@
 
                                 <!-- Page: music -->
                                 <Grid x:Name="MediaPage" Width="400" Height="176" VerticalAlignment="Top">
-                                    <!-- Ambient light: the artwork shrunk to a few pixels and stretched back out -->
-                                    <Border x:Name="MediaGlow" Opacity="0" IsHitTestVisible="False"
+                                    <!-- Ambient light: the artwork shrunk to a few pixels and stretched back out.
+                                         It reaches 16px below the page, under the pagination dots, so there is no seam. -->
+                                    <Border x:Name="MediaGlow" Opacity="0" IsHitTestVisible="False" Margin="0,0,0,-16"
                                             RenderOptions.BitmapScalingMode="HighQuality">
                                         <Border.OpacityMask>
                                             <RadialGradientBrush Center="0.2,0.3" GradientOrigin="0.2,0.3" RadiusX="0.8" RadiusY="1.15">
@@ -330,7 +331,7 @@
 
                                 <!-- Page: lyrics, karaoke style (LRCLIB) -->
                                 <Grid x:Name="LyricsPage" Width="400" Height="168" VerticalAlignment="Top">
-                                    <Border x:Name="LyricsGlow" Opacity="0" IsHitTestVisible="False"
+                                    <Border x:Name="LyricsGlow" Opacity="0" IsHitTestVisible="False" Margin="0,0,0,-16"
                                             RenderOptions.BitmapScalingMode="HighQuality">
                                         <Border.OpacityMask>
                                             <RadialGradientBrush Center="0.15,0.1" GradientOrigin="0.15,0.1" RadiusX="0.9" RadiusY="1.3">
