@@ -24,6 +24,13 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
   kaca hitam, bukan potongan hitam datar; saat island terbuka, cahaya samar mengikuti kursor.
 - **Sapaan**: saat island mulai, muncul "Selamat pagi/siang/sore/malam" dengan tanggal dan ikon
   matahari atau bulan.
+- **Kucing mini**: kucing hitam kecil menggantung di bawah island dengan kaki depannya. Saat sepi ia
+  tidur (bernapas, "z" melayang), bangun dan melirik saat kursor mendekat, menggoyangkan kepala saat
+  musik diputar, dan keluar hati kalau diklik (dielus). Ia melompat pergi saat island terbuka atau
+  menampilkan notifikasi, lalu turun lagi.
+- **Island kenyal**: tarik island ke bawah atau ke samping dan ia memanjang seperti jelly, lalu
+  memantul kembali saat dilepas (kucingnya ikut tertarik); klik dua kali untuk membuatnya bergoyang.
+  Menarik ke samping di island yang terbuka tetap menggeser halaman.
 - **Carousel**: island yang terbuka berisi halaman-halaman yang bisa digeser, dengan titik
   pagination ala iOS: 📞 **Panggilan** (saat mikrofon dipakai) → 🎵 **Musik** → 🎤 **Lirik** (kalau ada
   media) → ⏱ **Timer** → 📅 **Hari ini** → 🎛 **Kontrol** → 📊 **Sistem** → 📥 **Titipan** (kalau ada file). Geser dengan **scroll**, swipe dua jari ke samping di touchpad,
@@ -106,7 +113,7 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 
 Klik kanan island untuk menu singkat: **Timer**, **Kalender**, **Pengaturan…**, dan keluar.
 Jendela **Pengaturan** berisi semua opsi dalam bentuk saklar: gaya island/notch, cahaya suasana,
-sapaan, garis tipis saat diam, jangan tutupi jendela, halaman Kontrol/Sistem, cuaca dan kotanya, lirik dan equalizer, semua
+sapaan, kucing, island kenyal, garis tipis saat diam, jangan tutupi jendela, halaman Kontrol/Sistem, cuaca dan kotanya, lirik dan equalizer, semua
 jenis notifikasi (aplikasi, screenshot, unduhan, panggilan, lagu, volume, perangkat audio), link
 kalender, dan jalankan saat Windows mulai. Perubahan langsung berlaku.
 
@@ -133,6 +140,8 @@ kalender, dan jalankan saat Windows mulai. Perubahan langsung berlaku.
 | Pil panggilan | Notifikasi registry privasi yang sama dengan indikator mikrofon; jam durasi hanya jalan selama terlihat |
 | Sistem | Dibaca sekali per detik hanya selama halaman Sistem terbuka |
 | Cahaya suasana | Dua gradien statis; warnanya hanya dianimasikan (setengah detik) saat halaman atau aktivitas berganti |
+| Kucing | Digambar dengan beberapa bentuk vektor; gerakannya dibatasi 12 fps saat tidur (24 saat menari), posisi kursor dicek 4× per detik, dan semuanya berhenti total saat kucing tersembunyi atau dimatikan |
+| Island kenyal | Pegas yang hanya berjalan selama ditarik atau bergoyang |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).

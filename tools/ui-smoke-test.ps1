@@ -405,6 +405,16 @@ Save-Shot "00-greeting"
 Start-Sleep -Milliseconds 3800
 Save-Shot "01-idle"
 
+# The cat hangs under the thin line, asleep. The pointer comes near: it wakes up and looks at it.
+# A click on its head (line 5 px + 17 px down the cat, 3 px of paws over the edge) pets it.
+[SmokeInput]::SetCursorPos($centerX + 80, 40) | Out-Null
+Start-Sleep -Milliseconds 900
+Save-Shot "01b-cat-awake"
+[SmokeInput]::LeftClick($centerX, 19)
+Start-Sleep -Milliseconds 350
+Save-Shot "01c-cat-petted"
+Assert-Running
+
 # Idle, the island is a thin line at the very top edge: push the pointer up there to open it.
 # Nothing plays and no timer runs, so it opens on "today". Then into the open island.
 $islandY = 24
@@ -442,6 +452,22 @@ Start-Sleep -Milliseconds 1200
 Assert-Running
 Save-Shot "06-swiped-to-today"
 
+# Jelly: pull the open island down and it stretches; let go and it springs back. A double-click wobbles it.
+[SmokeInput]::LeftDown($centerX - 100, 60)
+foreach ($step in 1..8) { [SmokeInput]::SetCursorPos($centerX - 100 + $step * 3, 60 + $step * 9) | Out-Null; Start-Sleep -Milliseconds 15 }
+Start-Sleep -Milliseconds 100
+Save-Shot "06b-jelly-pull" 520 300
+[SmokeInput]::LeftUp()
+Start-Sleep -Milliseconds 900
+[SmokeInput]::LeftClick($centerX - 150, 175)
+[SmokeInput]::LeftClick($centerX - 150, 175)
+Start-Sleep -Milliseconds 90
+Save-Shot "06c-wobble" 520 300
+Start-Sleep -Milliseconds 900
+[SmokeInput]::SetCursorPos($centerX, 40) | Out-Null
+Start-Sleep -Milliseconds 300
+Assert-Running
+
 # Plain wheel down → next pages: quick controls, system, then the file shelf with the two deposited items.
 [SmokeInput]::Wheel(-120)
 Start-Sleep -Milliseconds 1500
@@ -474,6 +500,16 @@ Save-Shot "08-dot-click"
 Move-Away
 Start-Sleep -Milliseconds 1500
 Save-Shot "09-timer-compact"
+
+# Pulling the compact island works too (pressed straight away, before hovering opens it); the cat rides along.
+# Letting go must not count as a click: it springs back and stays compact.
+[SmokeInput]::LeftDown($centerX + 30, $islandY)
+foreach ($step in 1..8) { [SmokeInput]::SetCursorPos($centerX + 30 + $step * 4, $islandY + $step * 8) | Out-Null; Start-Sleep -Milliseconds 12 }
+Save-Shot "09b-jelly-compact"
+[SmokeInput]::LeftUp()
+Start-Sleep -Milliseconds 1200
+Save-Shot "09c-after-jelly"
+Assert-Running
 
 # ── Real OLE drag & drop: drag a file from another window onto the island, like from Explorer ──
 $form = New-Object System.Windows.Forms.Form

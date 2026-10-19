@@ -50,6 +50,12 @@ internal sealed class AppSettings
     /// <summary>A short "good morning" with the date when the island starts.</summary>
     public bool ShowGreeting { get; set; } = true;
 
+    /// <summary>A little cat hanging under the island: sleeps, wakes when the pointer comes near, dances to music, likes being petted.</summary>
+    public bool PetCat { get; set; } = true;
+
+    /// <summary>The island is "jelly": pull it and it springs back, double-click it and it wobbles.</summary>
+    public bool JellyIsland { get; set; } = true;
+
     /// <summary>Other apps' notifications (WhatsApp, Discord...) pop up in the island.</summary>
     public bool ShowAppNotifications { get; set; } = true;
 

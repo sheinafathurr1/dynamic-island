@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Media;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -229,6 +230,24 @@ public partial class IslandWindow : Window
     private bool _spotlightOn;
     private string _clockText = "";
 
+    // Jelly: the whole shape stretches (in percent) and shifts while pulled, then springs back
+    private readonly ScaleTransform _jellyScale = new();
+    private readonly TranslateTransform _jellyShift = new();
+    private readonly SpringValue _jellyX;
+    private readonly SpringValue _jellyY;
+    private readonly SpringValue _jellyOffset;
+    private bool _jellyPressed;
+    private bool _jellyPulling;
+    private Point _jellyStart;
+
+    // The cat
+    private readonly TranslateTransform _catDrop = new();
+    private readonly TranslateTransform _catPlace = new();
+    private readonly DispatcherTimer _catTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private bool _catShown;
+    private bool _catReady; // after the greeting, so it doesn't pop in and straight back out at start-up
+    private DateTime _catAwakeUntil;
+
     // Notifications & agenda
     private AppNotification? _notification;
     private readonly Dictionary<string, (string Name, BitmapSource? Icon)> _appInfo = [];
@@ -243,8 +262,34 @@ public partial class IslandWindow : Window
         _animator = new IslandAnimator(Island, Stage);
         _strip = new SpringValue(ApplyStripOffset);
         PageStrip.RenderTransform = _stripOffset;
-        _lift = new SpringValue(y => _liftOffset.Y = y);
-        Shape.RenderTransform = _liftOffset;
+        _lift = new SpringValue(y =>
+        {
+            _liftOffset.Y = y;
+            PlaceCat();
+        });
+        _jellyX = new SpringValue(v =>
+        {
+            _jellyScale.ScaleX = 1 + v / 100;
+            PlaceCat();
+        });
+        _jellyY = new SpringValue(v =>
+        {
+            _jellyScale.ScaleY = 1 + v / 100;
+            PlaceCat();
+        });
+        _jellyOffset = new SpringValue(x =>
+        {
+            _jellyShift.X = x;
+            PlaceCat();
+        });
+        // Stretches hang from the top edge: scale around the top centre, then the slim-line lift.
+        Shape.RenderTransformOrigin = new Point(0.5, 0);
+        Shape.RenderTransform = new TransformGroup { Children = { _jellyScale, _jellyShift, _liftOffset } };
+        Cat.RenderTransform = new TransformGroup { Children = { _catDrop, _catPlace } };
+        Island.SizeChanged += (_, _) => PlaceCat();
+        Shape.PreviewMouseLeftButtonDown += Shape_PreviewMouseLeftButtonDown;
+        Shape.LostMouseCapture += (_, _) => EndJellyPull();
+        _catTimer.Tick += (_, _) => WatchPointerForCat();
         _banners = new BannerSwitch(_settings);
         _lyricsScroll = new SpringValue(y => _lyricsOffset.Y = y);
         LyricsLines.RenderTransform = _lyricsOffset;
@@ -396,6 +441,8 @@ public partial class IslandWindow : Window
         {
             hello.Stop();
             ShowGreeting();
+            _catReady = true;
+            UpdateCat();
         };
         hello.Start();
 
@@ -502,6 +549,7 @@ public partial class IslandWindow : Window
             _expanded = false;
             Hide();
             ConfigureVisuals();
+            UpdateCat();
             _fullscreenCheck.Start();
         }
         else
@@ -581,6 +629,7 @@ public partial class IslandWindow : Window
         ConfigureVisuals();
         if (view != View.Expanded) HideSpotlight();
         UpdateMood();
+        UpdateCat();
     }
 
     private (double Width, double Height, double Radius) SizeOf(View view)
@@ -1022,6 +1071,7 @@ public partial class IslandWindow : Window
         // Buttons and the seek bar handle their own clicks, so this only fires on "empty" page areas.
         _pointerDown = true;
         _dragging = false;
+        _jellyStart = e.GetPosition(this);
         _pressTarget = e.OriginalSource as DependencyObject;
         _dragStartX = _dragLastX = e.GetPosition(Island).X;
         _dragLastTicks = Stopwatch.GetTimestamp();
@@ -1033,6 +1083,21 @@ public partial class IslandWindow : Window
     private void PageViewport_MouseMove(object sender, MouseEventArgs e)
     {
         if (!_pointerDown) return;
+
+        // Mostly downwards (or up) instead of sideways: stretch the jelly island rather than turn the page.
+        var pointer = e.GetPosition(this);
+        if (_jellyPulling)
+        {
+            StretchJelly(pointer);
+            return;
+        }
+        double pullX = pointer.X - _jellyStart.X, pullY = pointer.Y - _jellyStart.Y;
+        if (!_dragging && _settings.JellyIsland && Math.Abs(pullY) >= 8 && Math.Abs(pullY) > Math.Abs(pullX))
+        {
+            _jellyPulling = true;
+            StretchJelly(pointer);
+            return;
+        }
 
         double x = e.GetPosition(Island).X;
         double dx = x - _dragStartX;
@@ -1056,6 +1121,12 @@ public partial class IslandWindow : Window
     private void PageViewport_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (!_pointerDown) return;
+        if (_jellyPulling)
+        {
+            e.Handled = true; // a pull is not a click either
+            EndDrag();
+            return;
+        }
         bool swiped = _dragging;
         if (swiped) e.Handled = true; // a swipe is not a click
         FinishDrag();
@@ -1103,6 +1174,7 @@ public partial class IslandWindow : Window
 
     private void FinishDrag()
     {
+        EndJellyPull();
         bool dragged = _dragging;
         _pointerDown = false;
         _dragging = false;
@@ -1119,6 +1191,7 @@ public partial class IslandWindow : Window
 
     private void EndDrag()
     {
+        EndJellyPull();
         _pointerDown = false;
         _dragging = false;
         if (PageViewport.IsMouseCaptured) PageViewport.ReleaseMouseCapture();
@@ -2529,6 +2602,146 @@ public partial class IslandWindow : Window
         Spotlight.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(300)));
     }
 
+    // ───────────────────────────── jelly island & the cat ─────────────────────────────
+
+    /// <summary>Press on the island (not on a button): a double-click wobbles it, a drag pulls it like jelly.</summary>
+    private void Shape_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_settings.JellyIsland || IsInteractive(e.OriginalSource)) return;
+        if (e.ClickCount == 2)
+        {
+            Wobble();
+            return;
+        }
+        if (_view == View.Expanded) return; // the carousel decides between a page swipe and a pull
+        _jellyPressed = true;
+        _jellyStart = e.GetPosition(this);
+        _hoverTimer.Stop(); // a press is not hovering: don't open underneath the finger
+    }
+
+    /// <summary>Buttons, thumbnails, badges and other things with their own pointer: they keep their clicks and drags.</summary>
+    private bool IsInteractive(object? source)
+    {
+        for (var node = source as DependencyObject; node is not null && !ReferenceEquals(node, Shape);
+             node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node))
+        {
+            if (node is ButtonBase || node is FrameworkElement { Cursor: not null }) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Follows the pointer with rubber-band resistance: pulled down it grows longer (and a little
+    /// thinner), sideways it leans and widens, pushed up it squashes. Never past the window's edge.
+    /// </summary>
+    private void StretchJelly(Point pointer)
+    {
+        double dx = pointer.X - _jellyStart.X, dy = pointer.Y - _jellyStart.Y;
+        double height = Math.Max(1, Island.ActualHeight);
+        double room = (ActualHeight - 6 - (Shape.Margin.Top + _liftOffset.Y + height)) / height * 100;
+
+        double stretchY = dy >= 0 ? 26 * (1 - Math.Exp(-dy / 90)) : -7 * (1 - Math.Exp(dy / 50));
+        stretchY = Math.Min(stretchY, Math.Max(0, room));
+        double stretchX = 9 * (1 - Math.Exp(-Math.Abs(dx) / 120)) - 0.25 * Math.Max(0, stretchY);
+
+        _jellyY.Snap(stretchY);
+        _jellyX.Snap(stretchX);
+        _jellyOffset.Snap(22 * Math.Tanh(dx / 110));
+        _hoverTimer.Stop();
+    }
+
+    /// <summary>Let go: back into shape with a few wobbles.</summary>
+    private void EndJellyPull()
+    {
+        _jellyPressed = false;
+        if (!_jellyPulling) return;
+        _jellyPulling = false;
+        if (Shape.IsMouseCaptured) Shape.ReleaseMouseCapture();
+        _jellyX.AnimateTo(0, 0, response: 0.42, dampingRatio: 0.3);
+        _jellyY.AnimateTo(0, 0, response: 0.42, dampingRatio: 0.3);
+        _jellyOffset.AnimateTo(0, 0, response: 0.42, dampingRatio: 0.35);
+    }
+
+    /// <summary>Double-click: squash wide, then stretch tall, and settle — like poking a jelly.</summary>
+    private void Wobble()
+    {
+        if (_jellyPulling) return;
+        double strength = _view == View.Expanded ? 0.45 : 1; // the open island has less room to stretch into
+        _jellyX.AnimateTo(0, 240 * strength, response: 0.45, dampingRatio: 0.25);
+        _jellyY.AnimateTo(0, -280 * strength, response: 0.45, dampingRatio: 0.25);
+    }
+
+    /// <summary>The cat hangs from the island's bottom edge (wherever the morph, the slim-line lift or a pull has it).</summary>
+    private void PlaceCat()
+    {
+        double top = Shape.Margin.Top + _liftOffset.Y;
+        _catPlace.Y = top + Island.ActualHeight * _jellyScale.ScaleY - Controls.PetCat.EdgeY;
+        _catPlace.X = _jellyShift.X;
+    }
+
+    /// <summary>
+    /// Shows the cat under the idle line and the compact island (it hops away while the island is open
+    /// or shows a notification), and picks its mood: dancing to music, awake while the pointer is near, else asleep.
+    /// </summary>
+    private void UpdateCat()
+    {
+        bool show = _catReady && _settings.PetCat && !_hiddenForFullscreen && _view is View.Idle or View.Compact;
+        if (show != _catShown)
+        {
+            _catShown = show;
+            Cat.IsHitTestVisible = show;
+            if (show)
+            {
+                Cat.Active = true;
+                // Drops in from behind the island with a little bounce.
+                _catDrop.BeginAnimation(TranslateTransform.YProperty,
+                    new DoubleAnimation(-26, 0, TimeSpan.FromMilliseconds(520)) { EasingFunction = new BackEase { Amplitude = 0.6, EasingMode = EasingMode.EaseOut } });
+                Cat.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180)));
+                _catTimer.Start();
+            }
+            else
+            {
+                _catTimer.Stop();
+                _catDrop.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-26, TimeSpan.FromMilliseconds(160)) { EasingFunction = EaseIn });
+                var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(140));
+                fade.Completed += (_, _) =>
+                {
+                    if (!_catShown) Cat.Active = false; // hidden: no more frames
+                };
+                Cat.BeginAnimation(OpacityProperty, fade);
+            }
+        }
+        if (!show) return;
+
+        bool dancing = _view == View.Compact && ShowsCompactMedia && _media.IsPlaying;
+        Cat.Mood = dancing ? Controls.CatMood.Dancing
+            : DateTime.UtcNow < _catAwakeUntil ? Controls.CatMood.Awake
+            : Controls.CatMood.Sleeping;
+    }
+
+    /// <summary>Four times a second while the cat is out: is the pointer near? Then it wakes and watches it.</summary>
+    private void WatchPointerForCat()
+    {
+        if (!Native.GetCursorPos(out var cursor)) return;
+        var pointer = PointFromScreen(new Point(cursor.X, cursor.Y));
+        var head = Cat.TranslatePoint(Controls.PetCat.HeadCenter, this);
+        double dx = pointer.X - head.X, dy = pointer.Y - head.Y;
+        if (dx * dx + dy * dy < 130 * 130)
+        {
+            _catAwakeUntil = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            Cat.LookAt(dx / 90);
+        }
+        UpdateCat();
+    }
+
+    private void Cat_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        _catAwakeUntil = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        UpdateCat();
+        Cat.Pet();
+    }
+
     // ───────────────────────────── app notifications ─────────────────────────────
 
     private void OnAppNotification(AppNotification notification)
@@ -2960,6 +3173,20 @@ public partial class IslandWindow : Window
     private void Shape_MouseMove(object sender, MouseEventArgs e)
     {
         if (_view == View.Expanded) MoveSpotlight(e.GetPosition(Stage));
+        if (_jellyPressed && !_pointerDown)
+        {
+            var pointer = e.GetPosition(this);
+            if (!_jellyPulling && (pointer - _jellyStart).Length >= 6 && e.LeftButton == MouseButtonState.Pressed)
+            {
+                _jellyPulling = true;
+                Shape.CaptureMouse(); // keep stretching when the pointer leaves the island
+            }
+            if (_jellyPulling)
+            {
+                StretchJelly(pointer);
+                return;
+            }
+        }
         if (_expanded || !_hoverTimer.IsEnabled) return;
         var point = e.GetPosition(this);
         if ((point - _hoverPoint).Length < 4) return;
@@ -2990,6 +3217,12 @@ public partial class IslandWindow : Window
     private void Shape_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         _hoverTimer.Stop();
+        _jellyPressed = false;
+        if (_jellyPulling && !_pointerDown)
+        {
+            EndJellyPull(); // let go: it springs back; a pull is not a click
+            return;
+        }
 
         // Clicking a finished timer dismisses the alarm.
         if (_activity == ActivityKind.TimerDone)
@@ -3114,6 +3347,7 @@ public partial class IslandWindow : Window
         IslandRim.BorderThickness = notch ? new Thickness(1.5, 0, 1.5, 1.5) : new Thickness(1.5);
         SheenTop.Color = notch ? Color.FromArgb(0, 255, 255, 255) : Color.FromArgb(0x3D, 255, 255, 255); // a notch's top edge is the screen's
         _animator.SquareTopCorners = notch;
+        PlaceCat();
     }
 
     // ───────────────────────────── helpers ─────────────────────────────

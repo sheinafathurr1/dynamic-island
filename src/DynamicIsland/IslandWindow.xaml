@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="clr-namespace:DynamicIsland.Controls"
         Title="Dynamic Island"
-        Width="480" Height="230"
+        Width="480" Height="290"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="False" Topmost="True"
         FontFamily="{StaticResource UiFont}" Foreground="{StaticResource PrimaryText}">
@@ -872,5 +872,10 @@
                 </Path.RenderTransform>
             </Path>
         </StackPanel>
+
+        <!-- The cat hangs from the island's bottom edge; it is placed from code as the island morphs -->
+        <c:PetCat x:Name="Cat" Width="60" Height="40" HorizontalAlignment="Center" VerticalAlignment="Top"
+                  Opacity="0" IsHitTestVisible="False" Cursor="Hand"
+                  MouseLeftButtonUp="Cat_MouseLeftButtonUp" AutomationProperties.Name="Kucing" />
     </Grid>
 </Window>
