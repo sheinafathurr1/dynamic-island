@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:c="clr-namespace:DynamicIsland.Controls"
         Title="Dynamic Island"
-        Width="480" Height="210"
+        Width="480" Height="230"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="False" Topmost="True"
         FontFamily="{StaticResource UiFont}" Foreground="{StaticResource PrimaryText}">
@@ -162,188 +162,195 @@
                         </Grid>
                     </Grid>
 
-                    <!-- Expanded without media: clock, date, battery and quick timers -->
-                    <Grid x:Name="ClockView" VerticalAlignment="Top" Visibility="Collapsed">
-                        <Grid Margin="26,18,26,16">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock x:Name="ClockTime" FontSize="30" FontWeight="SemiBold" />
-                                    <TextBlock x:Name="ClockDate" FontSize="12.5" Foreground="{StaticResource SecondaryText}" Margin="1,-2,0,0" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <StackPanel x:Name="ClockBattery" Orientation="Horizontal" HorizontalAlignment="Right">
-                                        <TextBlock x:Name="ClockBatteryText" FontSize="13" FontWeight="SemiBold" Margin="0,0,8,0"
-                                                   VerticalAlignment="Center" />
-                                        <c:BatteryIcon x:Name="ClockBatteryIcon" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                    <TextBlock Text="Tidak ada media diputar" FontSize="11.5" Foreground="{StaticResource TertiaryText}"
-                                               HorizontalAlignment="Right" Margin="0,6,0,0" />
-                                </StackPanel>
-                            </Grid>
-                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,14,0,0">
-                                <Viewbox Width="15" Height="15" Margin="0,0,10,0" VerticalAlignment="Center">
-                                    <Grid Width="16" Height="16">
-                                        <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
-                                              Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
-                                    </Grid>
-                                </Viewbox>
-                                <Button Style="{StaticResource PillButton}" Content="5 mnt" Tag="5" Click="TimerPreset_Click" Margin="0,0,6,0" />
-                                <Button Style="{StaticResource PillButton}" Content="15 mnt" Tag="15" Click="TimerPreset_Click" Margin="0,0,6,0" />
-                                <Button Style="{StaticResource PillButton}" Content="25 mnt" Tag="25" Click="TimerPreset_Click" Margin="0,0,6,0" />
-                                <Button Style="{StaticResource PillButton}" Content="45 mnt" Tag="45" Click="TimerPreset_Click" />
-                            </StackPanel>
-                        </Grid>
-                    </Grid>
+                    <!-- Expanded: a swipeable carousel of pages (music, timer, today) -->
+                    <Grid x:Name="CarouselView" VerticalAlignment="Top" Visibility="Collapsed">
+                        <!-- Canvas: pages keep their full size off-screen; the island's clip hides them -->
+                        <Canvas x:Name="PageViewport" Background="Transparent"
+                                MouseLeftButtonDown="PageViewport_MouseLeftButtonDown"
+                                MouseMove="PageViewport_MouseMove"
+                                MouseLeftButtonUp="PageViewport_MouseLeftButtonUp"
+                                LostMouseCapture="PageViewport_LostMouseCapture">
+                            <StackPanel x:Name="PageStrip" Orientation="Horizontal">
 
-                    <!-- Expanded with media: artwork, title, progress and controls -->
-                    <Grid x:Name="MediaView" VerticalAlignment="Top" Visibility="Collapsed">
-                        <Grid Margin="22,20,22,14">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
+                                <!-- Page: music -->
+                                <Grid x:Name="MediaPage" Width="400" Height="176" VerticalAlignment="Top">
+                                    <Grid Margin="22,20,22,14">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
 
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Border x:Name="MediaArt" Style="{StaticResource Artwork}" Width="56" Height="56" CornerRadius="14">
-                                    <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="22" />
-                                </Border>
-                                <StackPanel Grid.Column="1" Margin="14,0,12,0" VerticalAlignment="Center">
-                                    <TextBlock x:Name="MediaTitle" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock x:Name="MediaArtist" FontSize="13" Foreground="{StaticResource SecondaryText}"
-                                               TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
-                                </StackPanel>
-                                <c:EqualizerBars x:Name="MediaEq" Grid.Column="2" BarHeight="18" Margin="0,0,2,0" />
-                            </Grid>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border x:Name="MediaArt" Style="{StaticResource Artwork}" Width="56" Height="56" CornerRadius="14">
+                                                <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="22" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="14,0,12,0" VerticalAlignment="Center">
+                                                <TextBlock x:Name="MediaTitle" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock x:Name="MediaArtist" FontSize="13" Foreground="{StaticResource SecondaryText}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                            </StackPanel>
+                                            <c:EqualizerBars x:Name="MediaEq" Grid.Column="2" BarHeight="18" Margin="0,0,2,0" />
+                                        </Grid>
 
-                            <Grid x:Name="MediaTimeline" Grid.Row="1" Margin="0,14,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="44" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="44" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock x:Name="MediaElapsed" FontSize="11" Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center" />
-                                <!-- Transparent 14px strip = comfortable click target for seeking -->
-                                <Grid x:Name="MediaTrack" Grid.Column="1" Height="14" Background="Transparent" Cursor="Hand"
-                                      MouseLeftButtonDown="MediaTrack_MouseLeftButtonDown">
-                                    <Grid Height="5" VerticalAlignment="Center">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition x:Name="MediaProgressDone" Width="0*" />
-                                            <ColumnDefinition x:Name="MediaProgressRest" Width="1*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border Grid.ColumnSpan="2" CornerRadius="2.5" Background="{StaticResource TrackBrush}" />
-                                        <Border CornerRadius="2.5" Background="White" />
+                                        <Grid x:Name="MediaTimeline" Grid.Row="1" Margin="0,14,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="44" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="44" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="MediaElapsed" FontSize="11" Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center" />
+                                            <!-- Transparent 14px strip = comfortable click target for seeking -->
+                                            <Grid x:Name="MediaTrack" Grid.Column="1" Height="14" Background="Transparent" Cursor="Hand"
+                                                  MouseLeftButtonDown="MediaTrack_MouseLeftButtonDown">
+                                                <Grid Height="5" VerticalAlignment="Center">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition x:Name="MediaProgressDone" Width="0*" />
+                                                        <ColumnDefinition x:Name="MediaProgressRest" Width="1*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.ColumnSpan="2" CornerRadius="2.5" Background="{StaticResource TrackBrush}" />
+                                                    <Border CornerRadius="2.5" Background="White" />
+                                                </Grid>
+                                            </Grid>
+                                            <TextBlock x:Name="MediaRemaining" Grid.Column="2" FontSize="11" Foreground="{StaticResource TertiaryText}"
+                                                       HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <Button x:Name="PreviousButton" Style="{StaticResource IconButton}" Margin="0,0,16,0" Click="Previous_Click">
+                                                <Viewbox Width="20" Height="20">
+                                                    <Path Width="16" Height="16" Data="{StaticResource IconPrevious}" Style="{StaticResource SolidIcon}" />
+                                                </Viewbox>
+                                            </Button>
+                                            <Button x:Name="PlayPauseButton" Style="{StaticResource IconButton}" Width="46" Height="46" Click="PlayPause_Click">
+                                                <Viewbox Width="22" Height="22">
+                                                    <Path x:Name="PlayPauseIcon" Width="16" Height="16" Data="{StaticResource IconPlay}" Style="{StaticResource SolidIcon}" />
+                                                </Viewbox>
+                                            </Button>
+                                            <Button x:Name="NextButton" Style="{StaticResource IconButton}" Margin="16,0,0,0" Click="Next_Click">
+                                                <Viewbox Width="20" Height="20">
+                                                    <Path Width="16" Height="16" Data="{StaticResource IconNext}" Style="{StaticResource SolidIcon}" />
+                                                </Viewbox>
+                                            </Button>
+                                        </StackPanel>
                                     </Grid>
                                 </Grid>
-                                <TextBlock x:Name="MediaRemaining" Grid.Column="2" FontSize="11" Foreground="{StaticResource TertiaryText}"
-                                           HorizontalAlignment="Right" VerticalAlignment="Center" />
-                            </Grid>
 
-                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Button x:Name="PreviousButton" Style="{StaticResource IconButton}" Margin="0,0,16,0" Click="Previous_Click">
-                                    <Viewbox Width="20" Height="20">
-                                        <Path Width="16" Height="16" Data="{StaticResource IconPrevious}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                                <Button x:Name="PlayPauseButton" Style="{StaticResource IconButton}" Width="46" Height="46" Click="PlayPause_Click">
-                                    <Viewbox Width="22" Height="22">
-                                        <Path x:Name="PlayPauseIcon" Width="16" Height="16" Data="{StaticResource IconPlay}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                                <Button x:Name="NextButton" Style="{StaticResource IconButton}" Margin="16,0,0,0" Click="Next_Click">
-                                    <Viewbox Width="20" Height="20">
-                                        <Path Width="16" Height="16" Data="{StaticResource IconNext}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                            </StackPanel>
-                        </Grid>
-                    </Grid>
-
-                    <!-- Expanded timer, with a mini player underneath when music is on -->
-                    <Grid x:Name="TimerView" VerticalAlignment="Top" Visibility="Collapsed">
-                        <Grid Height="64" VerticalAlignment="Top" Margin="22,18,16,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Grid Width="46" Height="46" VerticalAlignment="Center">
-                                <c:ProgressRing x:Name="TimerRing" Thickness="4" RingBrush="{StaticResource TimerBrush}" />
-                                <Viewbox Width="18" Height="18">
-                                    <Grid Width="16" Height="16">
-                                        <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
-                                              Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
+                                <!-- Page: timer (start buttons, or the running countdown) -->
+                                <Grid x:Name="TimerPage" Width="400" Height="100" VerticalAlignment="Top">
+                                    <Grid x:Name="TimerIdle" Margin="24,18,24,0" VerticalAlignment="Top">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Viewbox Width="17" Height="17" Margin="0,0,9,0" VerticalAlignment="Center">
+                                                <Grid Width="16" Height="16">
+                                                    <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
+                                                          Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
+                                                </Grid>
+                                            </Viewbox>
+                                            <TextBlock Text="Timer" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            <TextBlock Text="  ·  pilih durasi" FontSize="13" Foreground="{StaticResource TertiaryText}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,12,0,0">
+                                            <Button Style="{StaticResource PillButton}" Content="5 mnt" Tag="5" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                            <Button Style="{StaticResource PillButton}" Content="10 mnt" Tag="10" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                            <Button Style="{StaticResource PillButton}" Content="15 mnt" Tag="15" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                            <Button Style="{StaticResource PillButton}" Content="25 mnt" Tag="25" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                            <Button Style="{StaticResource PillButton}" Content="45 mnt" Tag="45" Click="TimerPreset_Click" />
+                                        </StackPanel>
                                     </Grid>
-                                </Viewbox>
-                            </Grid>
-                            <StackPanel Grid.Column="1" Margin="14,0,8,0" VerticalAlignment="Center">
-                                <TextBlock x:Name="TimerLabel" FontSize="12" Foreground="{StaticResource SecondaryText}" />
-                                <TextBlock x:Name="TimerText" FontSize="30" FontWeight="SemiBold" Margin="0,-3,0,0"
-                                           Foreground="{StaticResource TimerBrush}" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button Style="{StaticResource PillButton}" Content="+1 mnt" Click="TimerAdd_Click" Margin="0,0,6,0" />
-                                <Button Style="{StaticResource IconButton}" Width="38" Height="38" Click="TimerPause_Click">
-                                    <Viewbox Width="15" Height="15">
-                                        <Path x:Name="TimerPauseIcon" Width="16" Height="16" Data="{StaticResource IconPause}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                                <Button Style="{StaticResource IconButton}" Width="38" Height="38" Click="TimerStop_Click">
-                                    <Viewbox Width="13" Height="13">
-                                        <Grid Width="16" Height="16">
-                                            <Path Data="{StaticResource IconClose}" Style="{StaticResource StrokeIcon}" StrokeThickness="2" />
-                                        </Grid>
-                                    </Viewbox>
-                                </Button>
-                            </StackPanel>
-                        </Grid>
 
-                        <Grid x:Name="MiniPlayer" Height="56" VerticalAlignment="Bottom" Margin="16,0,14,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Top" Margin="6,0" Background="{StaticResource DividerBrush}" />
-                            <Border x:Name="MiniArt" Style="{StaticResource Artwork}" Width="32" Height="32" CornerRadius="8" Margin="6,0,10,0">
-                                <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="13" />
-                            </Border>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock x:Name="MiniTitle" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="MiniArtist" FontSize="11.5" Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis" />
+                                    <Grid x:Name="TimerRunning" Height="64" VerticalAlignment="Top" Margin="22,18,16,0" Visibility="Collapsed">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Width="46" Height="46" VerticalAlignment="Center">
+                                            <c:ProgressRing x:Name="TimerRing" Thickness="4" RingBrush="{StaticResource TimerBrush}" />
+                                            <Viewbox Width="18" Height="18">
+                                                <Grid Width="16" Height="16">
+                                                    <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
+                                                          Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
+                                                </Grid>
+                                            </Viewbox>
+                                        </Grid>
+                                        <StackPanel Grid.Column="1" Margin="14,0,8,0" VerticalAlignment="Center">
+                                            <TextBlock x:Name="TimerLabel" FontSize="12" Foreground="{StaticResource SecondaryText}" />
+                                            <TextBlock x:Name="TimerText" FontSize="30" FontWeight="SemiBold" Margin="0,-3,0,0"
+                                                       Foreground="{StaticResource TimerBrush}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource PillButton}" Content="+1 mnt" Click="TimerAdd_Click" Margin="0,0,6,0" />
+                                            <Button Style="{StaticResource IconButton}" Width="38" Height="38" Click="TimerPause_Click">
+                                                <Viewbox Width="15" Height="15">
+                                                    <Path x:Name="TimerPauseIcon" Width="16" Height="16" Data="{StaticResource IconPause}" Style="{StaticResource SolidIcon}" />
+                                                </Viewbox>
+                                            </Button>
+                                            <Button Style="{StaticResource IconButton}" Width="38" Height="38" Click="TimerStop_Click">
+                                                <Viewbox Width="13" Height="13">
+                                                    <Grid Width="16" Height="16">
+                                                        <Path Data="{StaticResource IconClose}" Style="{StaticResource StrokeIcon}" StrokeThickness="2" />
+                                                    </Grid>
+                                                </Viewbox>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+
+                                <!-- Page: today (clock, week strip, battery, audio output) -->
+                                <Grid x:Name="TodayPage" Width="400" Height="148" VerticalAlignment="Top">
+                                    <Grid Margin="26,18,26,0" VerticalAlignment="Top">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock x:Name="ClockTime" FontSize="30" FontWeight="SemiBold" />
+                                                <TextBlock x:Name="ClockDate" FontSize="12.5" Foreground="{StaticResource SecondaryText}" Margin="1,-2,0,0" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <StackPanel x:Name="ClockBattery" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <TextBlock x:Name="ClockBatteryText" FontSize="13" FontWeight="SemiBold" Margin="0,0,8,0"
+                                                               VerticalAlignment="Center" />
+                                                    <c:BatteryIcon x:Name="ClockBatteryIcon" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <StackPanel x:Name="ClockDevice" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,7,0,0">
+                                                    <Viewbox Width="13" Height="13" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                        <Grid Width="16" Height="16">
+                                                            <Path x:Name="ClockDeviceFill" Fill="{StaticResource SecondaryText}" />
+                                                            <Path x:Name="ClockDeviceStroke" Style="{StaticResource StrokeIcon}" Stroke="{StaticResource SecondaryText}" />
+                                                        </Grid>
+                                                    </Viewbox>
+                                                    <TextBlock x:Name="ClockDeviceText" FontSize="11.5" Foreground="{StaticResource SecondaryText}"
+                                                               MaxWidth="150" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                        <!-- Seven columns, filled in code (localised day names, today highlighted) -->
+                                        <UniformGrid x:Name="WeekStrip" Grid.Row="1" Rows="1" Columns="7" Margin="-6,14,-6,0" />
+                                    </Grid>
+                                </Grid>
+
                             </StackPanel>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                <Button x:Name="MiniPreviousButton" Style="{StaticResource IconButton}" Width="32" Height="32" Click="Previous_Click">
-                                    <Viewbox Width="14" Height="14">
-                                        <Path Width="16" Height="16" Data="{StaticResource IconPrevious}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                                <Button Style="{StaticResource IconButton}" Width="34" Height="34" Click="PlayPause_Click">
-                                    <Viewbox Width="15" Height="15">
-                                        <Path x:Name="MiniPlayPauseIcon" Width="16" Height="16" Data="{StaticResource IconPlay}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                                <Button x:Name="MiniNextButton" Style="{StaticResource IconButton}" Width="32" Height="32" Click="Next_Click">
-                                    <Viewbox Width="14" Height="14">
-                                        <Path Width="16" Height="16" Data="{StaticResource IconNext}" Style="{StaticResource SolidIcon}" />
-                                    </Viewbox>
-                                </Button>
-                            </StackPanel>
-                        </Grid>
+                        </Canvas>
                     </Grid>
+
+                    <!-- Pagination dots, pinned to the island's (animated) bottom edge -->
+                    <StackPanel x:Name="PageDots" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                Margin="0,0,0,4" Opacity="0" IsHitTestVisible="False" />
 
                 </Grid>
             </Border>

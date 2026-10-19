@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Media;
 using System.Windows;
@@ -21,9 +22,15 @@ public partial class IslandWindow : Window
         Idle,
         Compact,
         Activity,
-        ExpandedMedia,
-        ExpandedClock,
-        ExpandedTimer,
+        Expanded,
+    }
+
+    /// <summary>Pages of the expanded carousel, in display order.</summary>
+    private enum Page
+    {
+        Media,
+        Timer,
+        Today,
     }
 
     private enum ActivityKind
@@ -39,6 +46,13 @@ public partial class IslandWindow : Window
     /// <summary>How long the compact "now playing" stays after pausing before the island goes idle.</summary>
     private static readonly TimeSpan PauseGrace = TimeSpan.FromSeconds(45);
 
+    private const double PageWidth = 400;
+    private const double DotsSpace = 16;
+    private const int WM_MOUSEHWHEEL = 0x020E;
+
+    /// <summary>After a page turn, further wheel / touchpad input is ignored until it pauses this long.</summary>
+    private static readonly TimeSpan ScrollLock = TimeSpan.FromMilliseconds(220);
+
     private static readonly IEasingFunction Ease = Frozen(new CubicEase { EasingMode = EasingMode.EaseOut });
 
     private readonly AppSettings _settings = AppSettings.Load();
@@ -46,6 +60,8 @@ public partial class IslandWindow : Window
     private readonly TimerService _timer = new();
     private readonly MediaService _media;
     private readonly IslandAnimator _animator;
+    private readonly SpringValue _strip;
+    private readonly TranslateTransform _stripOffset = new();
     private VolumeService? _volume;
     private PrivacyMonitor? _privacy;
     private ShellHooks? _shell;
@@ -69,6 +85,22 @@ public partial class IslandWindow : Window
     private string? _microphoneApp;
     private string? _cameraApp;
 
+    // Carousel
+    private Page _page = Page.Today;
+    private List<Page> _pages = [];
+    private bool _snapStrip;
+    private int _scrollAccumulator;
+    private DateTime _lastScroll;
+    private DateTime _scrollLockedUntil;
+    private bool _pointerDown;
+    private bool _dragging;
+    private double _dragStartX;
+    private double _dragOrigin;
+    private double _dragLastX;
+    private long _dragLastTicks;
+    private double _dragVelocity;
+    private DateTime _weekStripDate;
+
     private BitmapSource? _artSource;
     private Brush? _artBrush;
     private Color _accent;
@@ -79,6 +111,14 @@ public partial class IslandWindow : Window
 
         _media = new MediaService(Dispatcher);
         _animator = new IslandAnimator(Island, Stage);
+        _strip = new SpringValue(ApplyStripOffset);
+        PageStrip.RenderTransform = _stripOffset;
+        foreach (var page in new FrameworkElement[] { MediaPage, TimerPage, TodayPage })
+        {
+            page.RenderTransformOrigin = new Point(0.5, 0.35);
+            page.RenderTransform = new ScaleTransform();
+        }
+
         ApplyStyle();
         _animator.Snap(60, 12, 6); // boots from a tiny dot
 
@@ -98,12 +138,13 @@ public partial class IslandWindow : Window
             _graceTimer.Stop();
             ApplyState();
         };
-        _liveTimer.Tick += (_, _) => RefreshLiveContent();
+        _liveTimer.Tick += (_, _) => RefreshLiveContent(allPages: false);
 
         _media.Changed += OnMediaChanged;
         _media.TrackChanged += OnTrackChanged;
         _timer.Changed += OnTimerChanged;
         _timer.Finished += OnTimerFinished;
+        Shape.MouseWheel += Shape_MouseWheel;
 
         Loaded += OnLoaded;
     }
@@ -121,7 +162,10 @@ public partial class IslandWindow : Window
         _shell.FullscreenChanged += OnFullscreenChanged;
         _shell.PowerChanged += OnPowerChanged;
         _shell.DisplayChanged += () => Dispatcher.InvokeAsync(PositionWindow, DispatcherPriority.Background);
-        HwndSource.FromHwnd(_hwnd)?.AddHook(_shell.WndProc);
+
+        var source = HwndSource.FromHwnd(_hwnd);
+        source?.AddHook(_shell.WndProc);
+        source?.AddHook(WndProc);
 
         PositionWindow();
     }
@@ -139,6 +183,17 @@ public partial class IslandWindow : Window
         _privacy?.Dispose();
         _shell?.Dispose();
         base.OnClosed(e);
+    }
+
+    private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        // WPF has no event for horizontal scrolling (tilt wheel, two-finger touchpad swipes).
+        if (msg == WM_MOUSEHWHEEL && _view == View.Expanded)
+        {
+            HandleScroll((short)((wParam.ToInt64() >> 16) & 0xFFFF));
+            handled = true;
+        }
+        return 0;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -223,6 +278,20 @@ public partial class IslandWindow : Window
     {
         if (_expanded == expanded) return;
         _expanded = expanded;
+
+        if (expanded)
+        {
+            // Open on whatever is most relevant right now; the rest is a swipe away.
+            _page = _media.HasSession && _media.IsPlaying ? Page.Media
+                : _timer.IsActive ? Page.Timer
+                : _media.HasSession ? Page.Media
+                : Page.Today;
+            _snapStrip = true;
+        }
+        else
+        {
+            EndDrag();
+        }
         ApplyState();
     }
 
@@ -231,12 +300,13 @@ public partial class IslandWindow : Window
     {
         View view =
             _activity == ActivityKind.TimerDone ? View.Activity // an alarm beats everything, even hover
-            : _expanded ? (_timer.IsActive ? View.ExpandedTimer : _media.HasSession ? View.ExpandedMedia : View.ExpandedClock)
+            : _expanded ? View.Expanded
             : _activity is not null ? View.Activity
             : _timer.IsActive || ShowsCompactMedia ? View.Compact
             : View.Idle;
 
         if (view == View.Compact) UpdateCompactSlots();
+        if (view == View.Expanded) SyncPages();
 
         var (width, height, radius) = SizeOf(view);
         _animator.AnimateTo(width, height, radius);
@@ -253,17 +323,20 @@ public partial class IslandWindow : Window
                 return notch ? (width + 10, 32, 12) : (width, 32, 16);
             case View.Activity:
                 return (_activitySize.Width, _activitySize.Height, notch ? 14 : _activitySize.Height / 2);
-            case View.ExpandedClock:
-                return (360, 132, notch ? 26 : 36);
-            case View.ExpandedMedia:
-                return (400, _media.HasTimeline ? 176 : 150, notch ? 28 : 40);
-            case View.ExpandedTimer:
-                return _media.HasSession ? (380, 156, notch ? 28 : 40) : (380, 100, notch ? 26 : 36);
+            case View.Expanded:
+                return (PageWidth, PageHeight(_page) + DotsSpace, notch ? 28 : 38);
             default:
                 if (notch) return (180, 30, 10);
                 return ShowsPrivacyDots ? (140, 32, 16) : (120, 32, 16);
         }
     }
+
+    private double PageHeight(Page page) => page switch
+    {
+        Page.Media => _media.HasTimeline ? 176 : 150,
+        Page.Timer => 100,
+        _ => 148,
+    };
 
     private void SwitchTo(View view, double width, double height)
     {
@@ -271,9 +344,7 @@ public partial class IslandWindow : Window
         {
             View.Compact => CompactView,
             View.Activity => ActivityView,
-            View.ExpandedMedia => MediaView,
-            View.ExpandedClock => ClockView,
-            View.ExpandedTimer => TimerView,
+            View.Expanded => CarouselView,
             _ => IdleView,
         };
 
@@ -289,16 +360,26 @@ public partial class IslandWindow : Window
         {
             if (previous is not null) FadeOut(previous);
             FadeIn(element);
+
+            bool dots = view == View.Expanded;
+            PageDots.IsHitTestVisible = dots;
+            PageDots.BeginAnimation(OpacityProperty, dots ? DelayedEase(0, 1, 120, 260) : new DoubleAnimation(0, TimeSpan.FromMilliseconds(100)));
+            if (dots) RefreshLiveContent(allPages: true);
         }
 
-        RefreshLiveContent();
+        RefreshLiveContent(allPages: false);
+        ConfigureLiveTimer();
+    }
 
-        // The only periodic work in the app, and only while something on screen is counting.
-        bool countdown = _timer.IsActive && !_timer.IsPaused && view is View.Compact or View.ExpandedTimer;
+    /// <summary>The only periodic work in the app, and only while something on screen is counting.</summary>
+    private void ConfigureLiveTimer()
+    {
+        bool expanded = _view == View.Expanded;
+        bool countdown = _timer.IsActive && !_timer.IsPaused && (_view == View.Compact || (expanded && _page == Page.Timer));
         TimeSpan? interval =
             countdown ? TimeSpan.FromMilliseconds(250)
-            : view == View.ExpandedMedia && _media.HasTimeline && _media.IsPlaying ? TimeSpan.FromMilliseconds(500)
-            : view == View.ExpandedClock ? TimeSpan.FromSeconds(1)
+            : expanded && _page == Page.Media && _media.HasTimeline && _media.IsPlaying ? TimeSpan.FromMilliseconds(500)
+            : expanded && _page == Page.Today ? TimeSpan.FromSeconds(1)
             : null;
 
         if (interval is { } value)
@@ -312,11 +393,12 @@ public partial class IslandWindow : Window
         }
     }
 
-    private void RefreshLiveContent()
+    private void RefreshLiveContent(bool allPages)
     {
         if (_timer.IsActive) UpdateTimerContent();
-        if (_view == View.ExpandedClock) UpdateClock();
-        else if (_view == View.ExpandedMedia) UpdateTimeline();
+        if (_view != View.Expanded) return;
+        if (allPages || _page == Page.Today) UpdateToday();
+        if (allPages || _page == Page.Media) UpdateTimeline();
     }
 
     /// <summary>Compact island: left = artwork or timer ring, right = equalizer and/or countdown.</summary>
@@ -415,6 +497,230 @@ public partial class IslandWindow : Window
         ShowActivity(kind, InfoPanel, width, string.IsNullOrEmpty(subtitle) ? 36 : 52, duration);
     }
 
+    // ───────────────────────────── carousel ─────────────────────────────
+
+    /// <summary>Keeps the page list, the dots and the strip position in line with what is available.</summary>
+    private void SyncPages()
+    {
+        List<Page> pages = _media.HasSession ? [Page.Media, Page.Timer, Page.Today] : [Page.Timer, Page.Today];
+        MediaPage.Visibility = _media.HasSession ? Visibility.Visible : Visibility.Collapsed;
+        if (!pages.Contains(_page)) _page = Page.Timer;
+
+        bool changed = !pages.SequenceEqual(_pages);
+        _pages = pages;
+        if (changed) RebuildDots();
+
+        if (changed || _snapStrip)
+        {
+            _snapStrip = false;
+            _strip.Snap(StripTarget(_page)); // pages moved under us: jump, don't slide
+            UpdateDots(animate: false);
+        }
+    }
+
+    private double StripTarget(Page page) => -_pages.IndexOf(page) * PageWidth;
+
+    private void GoToPage(Page page, double velocity = 0)
+    {
+        if (!_pages.Contains(page)) return;
+
+        bool changed = page != _page;
+        _page = page;
+        _strip.AnimateTo(StripTarget(page), velocity);
+        UpdateDots(animate: true);
+
+        if (changed)
+        {
+            RefreshLiveContent(allPages: false);
+            ApplyState(); // the island morphs to the new page's height
+        }
+    }
+
+    private void StepPage(int direction)
+    {
+        int index = _pages.IndexOf(_page) + direction;
+        if (index >= 0 && index < _pages.Count)
+        {
+            GoToPage(_pages[index]);
+            return;
+        }
+
+        // Already at the first / last page: a little bump says "that's the end".
+        _strip.AnimateTo(StripTarget(_page), velocity: -direction * 900);
+    }
+
+    /// <summary>Moves the strip and gives the neighbours depth: they shrink and fade as they slide away.</summary>
+    private void ApplyStripOffset(double x)
+    {
+        _stripOffset.X = x;
+        for (int i = 0; i < _pages.Count; i++)
+        {
+            var element = PageElement(_pages[i]);
+            double distance = Math.Min(1, Math.Abs(x + i * PageWidth) / PageWidth);
+            element.Opacity = 1 - 0.65 * distance;
+            if (element.RenderTransform is ScaleTransform scale)
+                scale.ScaleX = scale.ScaleY = 1 - 0.08 * distance;
+        }
+    }
+
+    private FrameworkElement PageElement(Page page) => page switch
+    {
+        Page.Media => MediaPage,
+        Page.Timer => TimerPage,
+        _ => TodayPage,
+    };
+
+    private void RebuildDots()
+    {
+        PageDots.Children.Clear();
+        foreach (var page in _pages)
+        {
+            var dot = new Border
+            {
+                Width = 6,
+                Height = 6,
+                CornerRadius = new CornerRadius(3),
+                Background = Brushes.White,
+                Opacity = 0.35,
+            };
+            var target = new Border // bigger, invisible hit area around the 6px dot
+            {
+                Background = Brushes.Transparent,
+                Padding = new Thickness(3, 5, 3, 5),
+                Cursor = Cursors.Hand,
+                Tag = page,
+                Child = dot,
+            };
+            target.MouseLeftButtonDown += (_, e) =>
+            {
+                e.Handled = true;
+                GoToPage(page);
+            };
+            PageDots.Children.Add(target);
+        }
+    }
+
+    /// <summary>The active dot stretches into a pill, like iOS.</summary>
+    private void UpdateDots(bool animate)
+    {
+        foreach (Border target in PageDots.Children)
+        {
+            var dot = (Border)target.Child;
+            bool active = (Page)target.Tag == _page;
+            double width = active ? 16 : 6, opacity = active ? 0.95 : 0.35;
+            if (animate)
+            {
+                var duration = TimeSpan.FromMilliseconds(260);
+                dot.BeginAnimation(WidthProperty, new DoubleAnimation(width, duration) { EasingFunction = Ease });
+                dot.BeginAnimation(OpacityProperty, new DoubleAnimation(opacity, duration));
+            }
+            else
+            {
+                dot.BeginAnimation(WidthProperty, null);
+                dot.BeginAnimation(OpacityProperty, null);
+                dot.Width = width;
+                dot.Opacity = opacity;
+            }
+        }
+    }
+
+    private void Shape_MouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (_view != View.Expanded) return;
+        e.Handled = true;
+        HandleScroll(-e.Delta); // wheel down / two fingers up → next page
+    }
+
+    /// <summary>Positive = towards the next page. A full wheel notch is 120; touchpads send many small steps.</summary>
+    private void HandleScroll(int delta)
+    {
+        var now = DateTime.UtcNow;
+        if (now < _scrollLockedUntil)
+        {
+            _scrollLockedUntil = now + ScrollLock; // still the same flick (touchpad inertia)
+            return;
+        }
+
+        if (now - _lastScroll > TimeSpan.FromMilliseconds(400)) _scrollAccumulator = 0;
+        _lastScroll = now;
+        _scrollAccumulator += delta;
+        if (Math.Abs(_scrollAccumulator) < 100) return;
+
+        StepPage(Math.Sign(_scrollAccumulator));
+        _scrollAccumulator = 0;
+        _scrollLockedUntil = now + ScrollLock;
+    }
+
+    private void PageViewport_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Buttons and the seek bar handle their own clicks, so this only fires on "empty" page areas.
+        _pointerDown = true;
+        _dragging = false;
+        _dragStartX = _dragLastX = e.GetPosition(Island).X;
+        _dragLastTicks = Stopwatch.GetTimestamp();
+        _dragVelocity = 0;
+        _dragOrigin = _strip.Value;
+        PageViewport.CaptureMouse();
+    }
+
+    private void PageViewport_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_pointerDown) return;
+
+        double x = e.GetPosition(Island).X;
+        double dx = x - _dragStartX;
+        if (!_dragging && Math.Abs(dx) < 6) return;
+        _dragging = true;
+
+        // Follow the finger 1:1, with rubber-banding past the first and last page.
+        double offset = _dragOrigin + dx;
+        double min = -(_pages.Count - 1) * PageWidth;
+        if (offset > 0) offset *= 0.35;
+        else if (offset < min) offset = min + (offset - min) * 0.35;
+        _strip.Snap(offset);
+
+        long now = Stopwatch.GetTimestamp();
+        double seconds = (now - _dragLastTicks) / (double)Stopwatch.Frequency;
+        if (seconds > 0.004) _dragVelocity = (x - _dragLastX) / seconds;
+        _dragLastX = x;
+        _dragLastTicks = now;
+    }
+
+    private void PageViewport_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_pointerDown) return;
+        if (_dragging) e.Handled = true; // a swipe is not a click
+        FinishDrag();
+    }
+
+    private void PageViewport_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_pointerDown) FinishDrag();
+    }
+
+    private void FinishDrag()
+    {
+        bool dragged = _dragging;
+        _pointerDown = false;
+        _dragging = false;
+        if (PageViewport.IsMouseCaptured) PageViewport.ReleaseMouseCapture();
+        if (!dragged) return;
+
+        // Where would a flick of this speed land? Move at most one page per swipe.
+        int current = _pages.IndexOf(_page);
+        double projected = _strip.Value + _dragVelocity * 0.18;
+        int target = Math.Clamp((int)Math.Round(-projected / PageWidth), current - 1, current + 1);
+        target = Math.Clamp(target, 0, _pages.Count - 1);
+        GoToPage(_pages[target], _dragVelocity);
+    }
+
+    private void EndDrag()
+    {
+        _pointerDown = false;
+        _dragging = false;
+        if (PageViewport.IsMouseCaptured) PageViewport.ReleaseMouseCapture();
+    }
+
     // ───────────────────────────── media ─────────────────────────────
 
     private void OnMediaChanged()
@@ -452,7 +758,6 @@ public partial class IslandWindow : Window
             SetArtwork(CompactArt);
             SetArtwork(MediaArt);
             SetArtwork(TrackArt);
-            SetArtwork(MiniArt);
         }
 
         if (_accent != _media.Accent)
@@ -463,16 +768,15 @@ public partial class IslandWindow : Window
         }
         CompactEq.IsPlaying = MediaEq.IsPlaying = TrackEq.IsPlaying = _media.IsPlaying;
 
-        MediaTitle.Text = MiniTitle.Text = _media.Title;
-        MediaArtist.Text = MiniArtist.Text = _media.Artist;
+        MediaTitle.Text = _media.Title;
+        MediaArtist.Text = _media.Artist;
         if (_activity == ActivityKind.Track) FillTrackPanel();
 
-        var playPause = (Geometry)FindResource(_media.IsPlaying ? "IconPause" : "IconPlay");
-        PlayPauseIcon.Data = MiniPlayPauseIcon.Data = playPause;
-        PreviousButton.IsEnabled = MiniPreviousButton.IsEnabled = _media.CanGoPrevious;
-        NextButton.IsEnabled = MiniNextButton.IsEnabled = _media.CanGoNext;
+        PlayPauseIcon.Data = (Geometry)FindResource(_media.IsPlaying ? "IconPause" : "IconPlay");
+        PreviousButton.IsEnabled = _media.CanGoPrevious;
+        NextButton.IsEnabled = _media.CanGoNext;
         MediaTimeline.Visibility = _media.HasTimeline ? Visibility.Visible : Visibility.Collapsed;
-        MiniPlayer.Visibility = _media.HasSession ? Visibility.Visible : Visibility.Collapsed;
+        MediaPage.Height = PageHeight(Page.Media);
     }
 
     private void FillTrackPanel()
@@ -538,6 +842,10 @@ public partial class IslandWindow : Window
 
     private void UpdateTimerContent()
     {
+        TimerIdle.Visibility = _timer.IsActive ? Visibility.Collapsed : Visibility.Visible;
+        TimerRunning.Visibility = _timer.IsActive ? Visibility.Visible : Visibility.Collapsed;
+        if (!_timer.IsActive) return;
+
         int seconds = (int)Math.Ceiling(_timer.Remaining.TotalSeconds);
         double total = _timer.Total.TotalSeconds;
         string text = FormatCountdown(seconds);
@@ -581,6 +889,7 @@ public partial class IslandWindow : Window
 
     private void OnAudioDeviceChanged(string name, bool worn)
     {
+        if (_view == View.Expanded) UpdateToday();
         if (!_settings.ShowDeviceChanges || _hiddenForFullscreen) return;
 
         ShowInfo(ActivityKind.Device,
@@ -622,7 +931,7 @@ public partial class IslandWindow : Window
         IdleCameraDot.Visibility = CompactCameraDot.Visibility = camera;
     }
 
-    // ───────────────────────────── power ─────────────────────────────
+    // ───────────────────────────── power & today page ─────────────────────────────
 
     private void OnPowerChanged()
     {
@@ -631,7 +940,7 @@ public partial class IslandWindow : Window
         var change = _power.Update();
         var state = _power.State;
 
-        if (_view == View.ExpandedClock) UpdateClock();
+        if (_view == View.Expanded) UpdateToday();
         if (_activity == ActivityKind.Power) FillPowerPanel(state);
         if (change is PowerChange.None or PowerChange.PercentChanged || _hiddenForFullscreen) return;
 
@@ -664,12 +973,13 @@ public partial class IslandWindow : Window
         PowerBattery.IsSaver = state.Saver;
     }
 
-    private void UpdateClock()
+    private void UpdateToday()
     {
         var now = DateTime.Now;
         var culture = CultureInfo.CurrentCulture;
         ClockTime.Text = now.ToString("t", culture);
         ClockDate.Text = now.ToString("dddd, d MMMM", culture);
+        UpdateWeekStrip(now.Date);
 
         var power = _power.State;
         ClockBattery.Visibility = power.HasBattery ? Visibility.Visible : Visibility.Collapsed;
@@ -677,6 +987,64 @@ public partial class IslandWindow : Window
         ClockBatteryIcon.Level = power.Percent / 100.0;
         ClockBatteryIcon.IsCharging = power.PluggedIn;
         ClockBatteryIcon.IsSaver = power.Saver;
+
+        string device = _volume?.DeviceName ?? "";
+        ClockDevice.Visibility = device.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ClockDeviceText.Text = device;
+        bool worn = _volume?.DeviceWorn ?? false;
+        ClockDeviceFill.Data = (Geometry)FindResource(worn ? "IconHeadphoneCups" : "IconSpeaker");
+        ClockDeviceStroke.Data = (Geometry)FindResource(worn ? "IconHeadphoneBand" : "IconSpeakerWaves");
+    }
+
+    /// <summary>This week as seven columns (localised, starting on the culture's first weekday), today circled.</summary>
+    private void UpdateWeekStrip(DateTime today)
+    {
+        if (_weekStripDate == today) return;
+        _weekStripDate = today;
+
+        var format = CultureInfo.CurrentCulture.DateTimeFormat;
+        var primary = (Brush)FindResource("PrimaryText");
+        var secondary = (Brush)FindResource("SecondaryText");
+        var tertiary = (Brush)FindResource("TertiaryText");
+        var highlight = (Brush)FindResource("WarningBrush");
+
+        int offset = ((int)today.DayOfWeek - (int)format.FirstDayOfWeek + 7) % 7;
+        var start = today.AddDays(-offset);
+
+        WeekStrip.Children.Clear();
+        for (int i = 0; i < 7; i++)
+        {
+            var day = start.AddDays(i);
+            bool isToday = day == today;
+            bool weekend = day.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+
+            var name = new TextBlock
+            {
+                Text = format.GetAbbreviatedDayName(day.DayOfWeek),
+                FontSize = 10.5,
+                Foreground = isToday ? primary : tertiary,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            var number = new TextBlock
+            {
+                Text = day.Day.ToString(CultureInfo.CurrentCulture),
+                FontSize = 13,
+                FontWeight = isToday ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = isToday ? primary : weekend ? tertiary : secondary,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var circle = new Border
+            {
+                Width = 26,
+                Height = 26,
+                CornerRadius = new CornerRadius(13),
+                Background = isToday ? highlight : Brushes.Transparent,
+                Margin = new Thickness(0, 3, 0, 0),
+                Child = number,
+            };
+            WeekStrip.Children.Add(new StackPanel { Children = { name, circle } });
+        }
     }
 
     // ───────────────────────────── mouse ─────────────────────────────
@@ -690,7 +1058,7 @@ public partial class IslandWindow : Window
     private void Shape_MouseLeave(object sender, MouseEventArgs e)
     {
         _hoverTimer.Stop();
-        if (_expanded) _leaveTimer.Start();
+        if (_expanded && !_pointerDown) _leaveTimer.Start();
     }
 
     private void Shape_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)

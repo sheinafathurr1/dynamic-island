@@ -36,6 +36,12 @@ internal sealed class VolumeService : IDisposable
     /// <summary>Raised on the UI thread with the new output's name and whether it is worn (headphones / headset).</summary>
     public event Action<string, bool>? DeviceChanged;
 
+    /// <summary>Friendly name of the current output, e.g. "Speakers (Realtek(R) Audio)"; empty when there is none.</summary>
+    public string DeviceName { get; private set; } = "";
+
+    /// <summary>Whether the current output is headphones / a headset.</summary>
+    public bool DeviceWorn { get; private set; }
+
     public void Dispose()
     {
         try
@@ -56,6 +62,8 @@ internal sealed class VolumeService : IDisposable
         if (_enumerator.GetDefaultAudioEndpoint(CoreAudio.ERender, CoreAudio.EMultimedia, out var device) != 0 || device is null)
         {
             _deviceId = null;
+            DeviceName = "";
+            DeviceWorn = false;
             return; // no speakers / headphones right now
         }
 
@@ -74,8 +82,9 @@ internal sealed class VolumeService : IDisposable
             device.GetId(out var id);
             bool changed = id != _deviceId;
             _deviceId = id;
-            if (announce && changed && ReadDeviceInfo(device) is var (name, worn) && name.Length > 0)
-                DeviceChanged?.Invoke(name, worn);
+            (DeviceName, DeviceWorn) = ReadDeviceInfo(device);
+            if (announce && changed && DeviceName.Length > 0)
+                DeviceChanged?.Invoke(DeviceName, DeviceWorn);
         }
         finally
         {

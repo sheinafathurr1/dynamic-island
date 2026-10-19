@@ -31,6 +31,10 @@ public static class SmokeInput
 
     public static void LeftClick(int x, int y)  { SetCursorPos(x, y); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
     public static void RightClick(int x, int y) { SetCursorPos(x, y); mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero); }
+    public static void LeftDown(int x, int y)   { SetCursorPos(x, y); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); }
+    public static void LeftUp()                 { mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
+    public static void Wheel(int delta)         { mouse_event(0x0800, 0, 0, unchecked((uint)delta), UIntPtr.Zero); }
+    public static void HWheel(int delta)        { mouse_event(0x1000, 0, 0, unchecked((uint)delta), UIntPtr.Zero); }
 
     // SRCCOPY | CAPTUREBLT: CAPTUREBLT is required to include layered (transparent) windows such as the island.
     public static Bitmap Capture(int x, int y, int width, int height)
@@ -125,42 +129,73 @@ Start-Sleep -Seconds 5
 Assert-Running
 Save-Shot "01-idle"
 
-# Hover → expanded clock with quick timers.
+# Hover → expanded carousel. Nothing is playing and no timer runs, so it opens on "today".
 $islandY = 24
 [SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
 Start-Sleep -Milliseconds 1500
 Assert-Running
-Save-Shot "02-clock"
+Save-Shot "02-today"
 
-# Start a timer from the quick chips → expanded timer.
+# Mouse wheel up → previous page (timer, with start buttons).
+[SmokeInput]::Wheel(120)
+Start-Sleep -Milliseconds 1200
+Save-Shot "03-timer-page"
+
+# Start a timer from the page's buttons.
 Invoke-ByName "25 mnt"
 Start-Sleep -Milliseconds 1500
-Save-Shot "03-timer-expanded"
+Save-Shot "04-timer-running"
+
+# Drag the page to the left like a finger swipe; screenshot halfway, then let go.
+[SmokeInput]::LeftDown($centerX - 40, 60)
+foreach ($step in 1..10) { [SmokeInput]::SetCursorPos($centerX - 40 - $step * 15, 60) | Out-Null; Start-Sleep -Milliseconds 15 }
+Start-Sleep -Milliseconds 300
+Save-Shot "05-swipe-halfway"
+foreach ($step in 11..14) { [SmokeInput]::SetCursorPos($centerX - 40 - $step * 15, 60) | Out-Null; Start-Sleep -Milliseconds 10 }
+[SmokeInput]::LeftUp()
+[SmokeInput]::SetCursorPos($centerX, 40) | Out-Null   # back over the island so it stays open
+Start-Sleep -Milliseconds 1200
+Assert-Running
+Save-Shot "06-swiped-to-today"
+
+# Horizontal scroll (touchpad / tilt wheel) back to the timer, then once more to hit the edge bounce.
+[SmokeInput]::HWheel(-120)
+Start-Sleep -Milliseconds 1200
+Save-Shot "07-hwheel-timer"
+[SmokeInput]::HWheel(-120)
+Start-Sleep -Milliseconds 800
+Assert-Running
+
+# Click the second pagination dot (timer page: island bottom ≈ 8 + 100 + 16 = 124).
+[SmokeInput]::LeftClick($centerX + 11, 112)
+[SmokeInput]::SetCursorPos($centerX, 40) | Out-Null
+Start-Sleep -Milliseconds 1200
+Save-Shot "08-dot-click"
 
 Move-Away
 Start-Sleep -Milliseconds 1500
-Save-Shot "04-timer-compact"
+Save-Shot "09-timer-compact"
 
 # Context menu and its Timer submenu.
 [SmokeInput]::RightClick($centerX, $islandY)
 Start-Sleep -Milliseconds 1200
-Save-Shot "05-menu" 760 520
+Save-Shot "10-menu" 760 520
 Expand-ByName "Timer"
 Start-Sleep -Milliseconds 1000
-Save-Shot "06-submenu" 900 560
+Save-Shot "11-submenu" 900 560
 
 # 1-minute timer from the submenu, then wait for the alarm.
 Invoke-ByName "1 menit"
 Move-Away
 Start-Sleep -Seconds 63
 Assert-Running
-Save-Shot "07-timer-done"
+Save-Shot "12-timer-done"
 
 # Dismiss the alarm by clicking it.
 [SmokeInput]::LeftClick($centerX, $islandY)
 Move-Away
 Start-Sleep -Milliseconds 1500
-Save-Shot "08-after-dismiss"
+Save-Shot "13-after-dismiss"
 
 # Switch to the notch style.
 [SmokeInput]::RightClick($centerX, $islandY)
@@ -168,10 +203,10 @@ Start-Sleep -Milliseconds 1000
 Invoke-ByName "Gaya notch (menempel di atas)"
 Move-Away
 Start-Sleep -Milliseconds 1500
-Save-Shot "09-notch-idle"
+Save-Shot "14-notch-idle"
 [SmokeInput]::SetCursorPos($centerX, 14) | Out-Null
 Start-Sleep -Milliseconds 1500
-Save-Shot "10-notch-clock"
+Save-Shot "15-notch-today"
 
 # Exit through the menu and make sure the process really ends.
 Move-Away

@@ -27,6 +27,9 @@ internal sealed class Spring
         Target = target;
     }
 
+    /// <summary>Gives the spring a shove, e.g. the speed of a finger that just let go.</summary>
+    public void Push(double velocity) => _velocity = velocity;
+
     /// <summary>Advances the simulation; returns true once it has come to rest.</summary>
     public bool Step(double seconds)
     {
