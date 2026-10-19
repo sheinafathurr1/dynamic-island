@@ -362,7 +362,7 @@ public partial class IslandWindow : Window
     {
         Page.Media => _media.HasTimeline ? 176 : 150,
         Page.Timer => 100,
-        Page.Shelf => 128,
+        Page.Shelf => 134,
         _ => 148,
     };
 
@@ -1439,6 +1439,7 @@ public partial class IslandWindow : Window
     private void Shape_Drop(object sender, DragEventArgs e)
     {
         e.Handled = true;
+        e.Effects = DragDropEffects.Copy; // tell the source we copied: it must never delete or move the original
         _dropLeaveTimer.Stop();
         if (_draggingOut || e.Data.GetData(DataFormats.FileDrop) is not string[] paths)
         {

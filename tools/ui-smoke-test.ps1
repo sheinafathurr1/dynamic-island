@@ -200,8 +200,8 @@ Save-Shot "07-shelf"
 Start-Sleep -Milliseconds 800
 Assert-Running
 
-# Click the first pagination dot (shelf page: island bottom = 8 + 128 + 16 = 152; dots 6+6+16 wide).
-[SmokeInput]::LeftClick($centerX - 17, 140)
+# Click the first pagination dot (shelf page: island bottom = 8 + 134 + 16 = 158; dots 6+6+16 wide).
+[SmokeInput]::LeftClick($centerX - 17, 146)
 [SmokeInput]::SetCursorPos($centerX, 40) | Out-Null
 Start-Sleep -Milliseconds 1200
 Save-Shot "08-dot-click"
