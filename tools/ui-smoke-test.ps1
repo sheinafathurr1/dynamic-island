@@ -15,6 +15,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Whatever fails, show what the app logged: that is usually the reason.
+trap {
+    $log = Join-Path $env:APPDATA "DynamicIsland\error.log"
+    if (Test-Path $log) {
+        Write-Host "::group::error.log"
+        Get-Content $log | Write-Host
+        Write-Host "::endgroup::"
+    }
+    break
+}
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms, UIAutomationClient, UIAutomationTypes
 
 # Shared with the background job that performs the drag (it runs in its own process).

@@ -14,8 +14,8 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 ## Fitur
 
 - **Carousel**: island yang terbuka berisi halaman-halaman yang bisa digeser, dengan titik
-  pagination ala iOS: 🎵 **Musik** → 🎤 **Lirik** (kalau ada media) → ⏱ **Timer** → 📅 **Hari ini** →
-  📥 **Titipan** (kalau ada file). Geser dengan **scroll**, swipe dua jari ke samping di touchpad,
+  pagination ala iOS: 📞 **Panggilan** (saat mikrofon dipakai) → 🎵 **Musik** → 🎤 **Lirik** (kalau ada
+  media) → ⏱ **Timer** → 📅 **Hari ini** → 🎛 **Kontrol** → 📊 **Sistem** → 📥 **Titipan** (kalau ada file). Geser dengan **scroll**, swipe dua jari ke samping di touchpad,
   klik-tarik (atau swipe di layar sentuh), atau klik titiknya. Halaman bisa "dilempar", memantul di
   ujung, halaman samping mengecil dan memudar, dan tinggi island ikut menyesuaikan.
 - **Shift + scroll untuk volume**: di atas island (kecil maupun terbuka), 2% per langkah; klik
@@ -69,6 +69,20 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 - **Volume**: indikator volume & mute saat volume diubah (tombol keyboard, tray, atau aplikasi).
 - **Baterai**: "Mengisi daya" saat charger dicolok, "Menggunakan baterai" saat dicabut,
   "Baterai lemah" ketika baterai turun ke 20% dan 10%, serta status penghemat baterai (kuning).
+- **Pil panggilan**: saat Zoom, Meet, Teams, Discord, dll. memakai mikrofon, island ringkas berubah
+  jadi pil hijau berisi nama aplikasi dan durasi panggilan. Halaman Panggilan punya tombol
+  **Bisukan** yang mematikan mikrofon untuk semua aplikasi sekaligus (pil jadi merah), dan klik
+  ikon mikrofonnya membawa aplikasi rapat ke depan.
+- **Preview screenshot**: setelah Win+Shift+S, PrtSc, atau Win+PrtSc, island menampilkan thumbnail
+  screenshot. Seret langsung ke WhatsApp/Explorer, buka, tampilkan di folder, atau titipkan.
+- **Unduhan selesai**: saat file di folder Downloads selesai diunduh (Chrome, Edge, Firefox, dll.),
+  island menampilkan nama, ukuran, dan ikonnya, dengan tombol yang sama.
+- **Kontrol**: tombol bulat untuk Wi-Fi, Bluetooth, mute mikrofon, mute suara, dan mode gelap/terang.
+- **Sistem**: CPU (dengan grafik kecil), memori, kecepatan internet ↓↑, dan sisa disk; hanya dihitung
+  selama halamannya terbuka.
+- **Cuaca** di halaman Hari ini: suhu dan kondisi sekarang plus 3 jam ke depan, dari
+  [Open-Meteo](https://open-meteo.com) (gratis, tanpa akun). Isi kota di Pengaturan, atau biarkan
+  kosong untuk memakai lokasi Windows.
 - **Hari ini**: jam, tanggal, baterai, perangkat audio, kalender minggu ini (hari ini dilingkari),
   dan **agenda**: acara yang sedang/akan berlangsung hari ini dan besok, plus titik di hari yang ada
   acaranya. Agenda diambil dari link iCal Google Calendar, Outlook, atau iCloud (klik kanan →
@@ -79,10 +93,11 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 - Animasi pegas (*spring*) dengan sedikit pantulan seperti aslinya, tajam di semua skala DPI.
 - Tidak mencuri fokus saat diklik dan tidak muncul di taskbar maupun Alt+Tab.
 
-Klik kanan island untuk menu: **Timer**, **Kalender**, gaya island/notch, garis tipis saat diam,
-jangan tutupi jendela, **Notifikasi** (volume, lagu baru, perangkat audio, mikrofon & kamera,
-notifikasi aplikasi, tanpa banner Windows — masing-masing bisa dimatikan), **Musik** (lirik,
-equalizer suara asli, garis warna cover), jalankan saat Windows mulai, dan keluar.
+Klik kanan island untuk menu singkat: **Timer**, **Kalender**, **Pengaturan…**, dan keluar.
+Jendela **Pengaturan** berisi semua opsi dalam bentuk saklar: gaya island/notch, garis tipis saat
+diam, jangan tutupi jendela, halaman Kontrol/Sistem, cuaca dan kotanya, lirik dan equalizer, semua
+jenis notifikasi (aplikasi, screenshot, unduhan, panggilan, lagu, volume, perangkat audio), link
+kalender, dan jalankan saat Windows mulai. Perubahan langsung berlaku.
 
 ## Kenapa ringan
 
@@ -102,6 +117,10 @@ equalizer suara asli, garis warna cover), jalankan saat Windows mulai, dan kelua
 | Lirik | Satu request per lagu (di-cache); baris berikutnya dijadwalkan tepat saat mulai, bukan dicek terus-menerus |
 | Notifikasi aplikasi | Dibaca saat file database notifikasi Windows berubah, plus satu query kecil tiap 3 detik sebagai cadangan |
 | Kalender | Satu unduhan file iCal tiap 15 menit; acara berulang dihitung dalam milidetik |
+| Cuaca | Satu request kecil ke Open-Meteo tiap 30 menit |
+| Screenshot & unduhan | Notifikasi clipboard dan perubahan folder dari Windows, tanpa polling |
+| Pil panggilan | Notifikasi registry privasi yang sama dengan indikator mikrofon; jam durasi hanya jalan selama terlihat |
+| Sistem | Dibaca sekali per detik hanya selama halaman Sistem terbuka |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).
@@ -155,6 +174,8 @@ src/DynamicIsland/
 ├─ Controls/
 │  ├─ EqualizerBars.cs      Gelombang "now playing" (suara asli atau animasi)
 │  ├─ ProgressRing.cs       Ring hitung mundur timer
+│  ├─ WeatherIcon.cs        Ikon cuaca vektor (matahari, bulan, awan, hujan, petir...)
+│  ├─ Sparkline.cs          Grafik kecil CPU
 │  └─ BatteryIcon.cs        Ikon baterai ala iOS
 ├─ Services/
 │  ├─ MediaService.cs       Sesi media sistem (judul, cover, kontrol, timeline)
@@ -171,8 +192,16 @@ src/DynamicIsland/
 │  ├─ ToastPayload.cs       Membaca isi XML notifikasi toast
 │  ├─ CalendarService.cs    Mengambil & memperbarui feed iCal
 │  ├─ IcsCalendar.cs        Parser iCal: zona waktu, acara seharian, acara berulang
+│  ├─ WeatherService.cs     Cuaca dari Open-Meteo (kota atau lokasi Windows)
+│  ├─ WeatherForecast.cs    Membaca jawaban Open-Meteo + kode cuaca → ikon & teks
+│  ├─ ScreenshotWatcher.cs  Screenshot baru (clipboard Snipping Tool & folder Screenshots)
+│  ├─ DownloadWatcher.cs    Unduhan yang selesai di folder Downloads
+│  ├─ MicrophoneMute.cs     Bisukan mikrofon untuk semua aplikasi
+│  ├─ QuickControls.cs      Wi-Fi, Bluetooth, mode gelap
+│  ├─ SystemStats.cs        CPU, memori, jaringan, disk
 │  └─ ShellHooks.cs         Notifikasi fullscreen, daya, dan perubahan layar
 ├─ CalendarDialog.xaml(.cs) Jendela untuk menempel link iCal
+├─ SettingsWindow.xaml(.cs) Jendela Pengaturan (semua opsi sebagai saklar)
 ├─ Interop/                 Deklarasi Win32, Core Audio, SQLite bawaan Windows & thumbnail Explorer
 └─ AppSettings.cs           Pengaturan (%AppData%\DynamicIsland\settings.json) & autostart
 tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, ambil screenshot)
@@ -205,6 +234,10 @@ tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, a
 - Aplikasi Kalender bawaan Windows sudah dihentikan Microsoft dan Outlook baru tidak membagikan
   agendanya ke aplikasi lain, jadi agenda memakai link iCal. Link itu rahasia: hanya disimpan di
   `settings.json` di PC ini.
+- Tombol Bisukan di pil panggilan mematikan mikrofon default Windows (semua aplikasi), bukan tombol
+  mute di dalam Zoom/Meet. Wi-Fi dan Bluetooth hanya bisa diatur di PC yang punya perangkatnya.
+- Cuaca tanpa kota memakai lokasi Windows; kalau "Izinkan aplikasi desktop mengakses lokasi" mati,
+  isi kota di Pengaturan.
 - Equalizer suara asli mendengarkan perangkat output default; kalau Spotify diarahkan ke perangkat
   lain, equalizer memakai animasi biasa.
 - Log error (kalau ada) tersimpan di `%AppData%\DynamicIsland\error.log`.
