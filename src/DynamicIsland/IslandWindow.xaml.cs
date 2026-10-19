@@ -28,10 +28,13 @@ public partial class IslandWindow : Window
     /// <summary>Pages of the expanded carousel, in display order.</summary>
     private enum Page
     {
+        Call,
         Media,
         Lyrics,
         Timer,
         Today,
+        Controls,
+        System,
         Shelf,
     }
 
@@ -54,6 +57,7 @@ public partial class IslandWindow : Window
         Privacy,
         TimerDone,
         Notification,
+        File,
     }
 
     /// <summary>How long the compact "now playing" stays after pausing before the island goes idle.</summary>
@@ -70,6 +74,10 @@ public partial class IslandWindow : Window
     private static readonly TimeSpan LyricLead = TimeSpan.FromMilliseconds(150);
 
     private static readonly TimeSpan NotificationDuration = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan FileDuration = TimeSpan.FromSeconds(6);
+
+    /// <summary>One round switch on the controls page and the parts that show its state.</summary>
+    private sealed record QuickControl(Button Button, System.Windows.Shapes.Path Slash, TextBlock State);
 
     /// <summary>Silence this long while "playing" (muted player, music on another output) hands the bars back to the canned loop.</summary>
     private static readonly TimeSpan LiveAudioGrace = TimeSpan.FromSeconds(2.5);
@@ -87,6 +95,9 @@ public partial class IslandWindow : Window
     private readonly LyricsService _lyricsService = new();
     private readonly AudioSpectrum _spectrum = new();
     private readonly CalendarService _calendar = new();
+    private readonly WeatherService _weather = new();
+    private readonly SystemStats _stats = new();
+    private readonly QuickControls _quick;
     private readonly MediaService _media;
     private readonly IslandAnimator _animator;
     private readonly SpringValue _strip;
@@ -98,7 +109,10 @@ public partial class IslandWindow : Window
     private PrivacyMonitor? _privacy;
     private ShellHooks? _shell;
     private NotificationWatcher? _notifications;
+    private ScreenshotWatcher? _screenshots;
+    private DownloadWatcher? _downloads;
     private CalendarDialog? _calendarDialog;
+    private SettingsWindow? _settingsWindow;
     private nint _hwnd;
 
     private readonly DispatcherTimer _hoverTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
@@ -176,6 +190,12 @@ public partial class IslandWindow : Window
     private double _rimPhase;
     private long _lastVisualTick;
 
+    // Call, quick controls, files
+    private bool? _micMuted;
+    private string? _filePath;
+    private readonly Dictionary<string, QuickControl> _controls = [];
+    private WeatherForecast? _shownForecast;
+
     // Notifications & agenda
     private AppNotification? _notification;
     private readonly Dictionary<string, (string Name, BitmapSource? Icon)> _appInfo = [];
@@ -186,6 +206,7 @@ public partial class IslandWindow : Window
         InitializeComponent();
 
         _media = new MediaService(Dispatcher);
+        _quick = new QuickControls(Dispatcher);
         _animator = new IslandAnimator(Island, Stage);
         _strip = new SpringValue(ApplyStripOffset);
         PageStrip.RenderTransform = _stripOffset;
@@ -194,7 +215,7 @@ public partial class IslandWindow : Window
         _banners = new BannerSwitch(_settings);
         _lyricsScroll = new SpringValue(y => _lyricsOffset.Y = y);
         LyricsLines.RenderTransform = _lyricsOffset;
-        foreach (var page in new FrameworkElement[] { MediaPage, LyricsPage, TimerPage, TodayPage, ShelfPage })
+        foreach (var page in new FrameworkElement[] { CallPage, MediaPage, LyricsPage, TimerPage, TodayPage, ControlsPage, SystemPage, ShelfPage })
         {
             page.RenderTransformOrigin = new Point(0.5, 0.35);
             page.RenderTransform = new ScaleTransform();
@@ -241,11 +262,16 @@ public partial class IslandWindow : Window
         _shelf.Changed += OnShelfChanged;
         _shelf.Load();
         OnShelfChanged();
-        AttachDragOut(ShelfDragAll, () => _shelf.Items.ToList(), open: null);
+        AttachDragOut(ShelfDragAll, () => _shelf.Items.ToList(), onClick: null);
+        AttachDragOut(FileThumb, () => _filePath is { } file ? [new ShelfItem(file)] : [], onClick: OpenCurrentFile);
+        BuildControls();
+        _quick.Changed += UpdateControls;
+        _weather.Changed += OnWeatherChanged;
         Shape.MouseWheel += Shape_MouseWheel;
         Shape.MouseMove += Shape_MouseMove;
         _calendar.Changed += OnCalendarChanged;
         _calendar.SetSource(_settings.CalendarSource);
+        _weather.Configure(_settings.ShowWeather, _settings.WeatherCity);
 
         Loaded += OnLoaded;
     }
@@ -269,6 +295,16 @@ public partial class IslandWindow : Window
         source?.AddHook(_shell.WndProc);
         source?.AddHook(WndProc);
 
+        try
+        {
+            _screenshots = new ScreenshotWatcher(_hwnd, Dispatcher) { Enabled = _settings.ShowScreenshots };
+            _screenshots.Captured += path => ShowFile(path, screenshot: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+
         PositionWindow();
     }
 
@@ -284,6 +320,8 @@ public partial class IslandWindow : Window
         _media.Dispose();
         _spectrum.Dispose();
         _notifications?.Dispose();
+        _screenshots?.Dispose();
+        _downloads?.Dispose();
         _banners.RestoreAll(forget: false); // Windows shows its own banners again while the island is closed
         _volume?.Dispose();
         _privacy?.Dispose();
@@ -300,6 +338,10 @@ public partial class IslandWindow : Window
             if (Native.IsShiftDown) AdjustVolume(delta); // some mouse drivers turn Shift + wheel into a sideways scroll
             else if (_view == View.Expanded) HandleScroll(delta);
             handled = true;
+        }
+        else if (msg == Native.WM_CLIPBOARDUPDATE)
+        {
+            _screenshots?.OnClipboardUpdate();
         }
         return 0;
     }
@@ -335,6 +377,17 @@ public partial class IslandWindow : Window
         {
             Log.Error(ex);
         }
+
+        try
+        {
+            _downloads = new DownloadWatcher(Dispatcher) { Enabled = _settings.ShowDownloads };
+            _downloads.Finished += path => ShowFile(path, screenshot: false);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+        if (_settings.ShowControlsPage) _quick.Start();
 
         try
         {
@@ -417,6 +470,9 @@ public partial class IslandWindow : Window
 
     private bool ShowsPrivacyDots => _settings.ShowPrivacy && (_microphoneApp is not null || _cameraApp is not null);
 
+    /// <summary>An app is recording from the microphone (a call or meeting): the compact island becomes a call pill.</summary>
+    private bool ShowsCall => _settings.ShowPrivacy && _privacy?.Microphone is not null;
+
     /// <summary>Nothing to show (and no mic / camera dots): just a thin line at the screen edge, covering nothing.</summary>
     private bool ShowsSlimIdle => _settings.SlimWhenIdle && !ShowsPrivacyDots;
 
@@ -429,7 +485,8 @@ public partial class IslandWindow : Window
         {
             // Open on whatever is most relevant right now; the rest is a swipe away.
             _page = _pendingPage
-                ?? (_media.HasSession && _media.IsPlaying ? Page.Media
+                ?? (ShowsCall ? Page.Call
+                : _media.HasSession && _media.IsPlaying ? Page.Media
                 : _timer.IsActive ? Page.Timer
                 : _media.HasSession ? Page.Media
                 : Page.Today);
@@ -442,7 +499,7 @@ public partial class IslandWindow : Window
 
             // A message that came in while the island was open gets its full time once it closes
             // (its Windows banner may be switched off, so this is where it is seen).
-            if (_activity == ActivityKind.Notification)
+            if (_activity is ActivityKind.Notification or ActivityKind.File)
             {
                 _activityTimer.Stop();
                 _activityTimer.Interval = NotificationDuration;
@@ -459,7 +516,7 @@ public partial class IslandWindow : Window
             _activity == ActivityKind.TimerDone ? View.Activity // an alarm beats everything, even hover
             : _expanded || _dropActive ? View.Expanded
             : _activity is not null ? View.Activity
-            : _timer.IsActive || ShowsCompactMedia ? View.Compact
+            : _timer.IsActive || ShowsCompactMedia || ShowsCall ? View.Compact
             : View.Idle;
 
         if (view == View.Compact) UpdateCompactSlots();
@@ -479,7 +536,7 @@ public partial class IslandWindow : Window
         switch (view)
         {
             case View.Compact:
-                double width = ShowsCompactLyric ? 380 : ShowsCompactMedia ? 250 : 200;
+                double width = ShowsCall ? 260 : ShowsCompactLyric ? 380 : ShowsCompactMedia ? 250 : 200;
                 return notch ? (width + 10, 32, 12) : (width, 32, 16);
             case View.Activity:
                 return (_activitySize.Width, _activitySize.Height, notch ? 14 : _activitySize.Height / 2);
@@ -518,11 +575,14 @@ public partial class IslandWindow : Window
 
     private double PageHeight(Page page) => page switch
     {
+        Page.Call => 104,
         Page.Media => _media.HasTimeline ? 176 : 150,
         Page.Lyrics => 168,
         Page.Timer => 100,
+        Page.Controls => 112,
+        Page.System => 146,
         Page.Shelf => 134,
-        _ => 164,
+        _ => _settings.ShowWeather ? 202 : 164, // today, with or without the weather row
     };
 
     private void SwitchTo(View view, double width, double height)
@@ -564,10 +624,12 @@ public partial class IslandWindow : Window
     {
         bool expanded = _view == View.Expanded;
         bool countdown = _timer.IsActive && !_timer.IsPaused && (_view == View.Compact || (expanded && _page == Page.Timer));
+        bool callClock = ShowsCall && (_view == View.Compact || (expanded && _page == Page.Call));
         TimeSpan? interval =
             countdown ? TimeSpan.FromMilliseconds(250)
             : expanded && _page == Page.Media && _media.HasTimeline && _media.IsPlaying ? TimeSpan.FromMilliseconds(500)
-            : expanded && _page == Page.Today ? TimeSpan.FromSeconds(1)
+            : callClock || (expanded && _page is Page.Today or Page.System) ? TimeSpan.FromSeconds(1)
+            : expanded && _page == Page.Controls ? TimeSpan.FromSeconds(2) // mic / sound mute can change elsewhere
             : null;
 
         if (interval is { } value)
@@ -584,21 +646,35 @@ public partial class IslandWindow : Window
     private void RefreshLiveContent(bool allPages)
     {
         if (_timer.IsActive) UpdateTimerContent();
-        if (_view != View.Expanded) return;
+        if (ShowsCall && (_view == View.Compact || _view == View.Expanded)) UpdateCall();
+        if (_view != View.Expanded)
+        {
+            _stats.Reset(); // the system page starts its history afresh next time
+            return;
+        }
         if (allPages || _page == Page.Today) UpdateToday();
         if (allPages || _page == Page.Media) UpdateTimeline();
+        if (allPages || _page == Page.Controls) UpdateControls();
+        if (_page == Page.System) UpdateSystem();
     }
 
-    /// <summary>Compact island: left = artwork or timer ring, right = equalizer and/or countdown.</summary>
+    /// <summary>
+    /// Compact island: left = artwork, timer ring or call microphone; middle = live lyric or call app;
+    /// right = equalizer, countdown or call duration. A call takes over the whole pill.
+    /// </summary>
     private void UpdateCompactSlots()
     {
-        bool media = ShowsCompactMedia;
-        bool timer = _timer.IsActive;
+        bool call = ShowsCall;
+        bool media = ShowsCompactMedia && !call;
+        bool timer = _timer.IsActive && !call;
         CompactArt.Visibility = media ? Visibility.Visible : Visibility.Collapsed;
         CompactRing.Visibility = !media && timer ? Visibility.Visible : Visibility.Collapsed;
         CompactEq.Visibility = media && !timer ? Visibility.Visible : Visibility.Collapsed;
         CompactTimerText.Visibility = timer ? Visibility.Visible : Visibility.Collapsed;
-        CompactLyric.Visibility = CompactLyricOld.Visibility = ShowsCompactLyric ? Visibility.Visible : Visibility.Collapsed;
+        CompactLyric.Visibility = CompactLyricOld.Visibility = ShowsCompactLyric && !call ? Visibility.Visible : Visibility.Collapsed;
+        CompactCall.Visibility = CompactCallApp.Visibility = CompactCallTime.Visibility = call ? Visibility.Visible : Visibility.Collapsed;
+        CompactMicDot.Visibility = !call && _settings.ShowPrivacy && _microphoneApp is not null ? Visibility.Visible : Visibility.Collapsed;
+        if (call) UpdateCall();
     }
 
     private void FadeIn(FrameworkElement element)
@@ -693,12 +769,19 @@ public partial class IslandWindow : Window
     private void SyncPages()
     {
         List<Page> pages = [];
+        if (ShowsCall) pages.Add(Page.Call);
         if (_media.HasSession) pages.Add(Page.Media);
         if (_media.HasSession && _settings.ShowLyrics) pages.Add(Page.Lyrics);
         pages.Add(Page.Timer);
         pages.Add(Page.Today);
+        if (_settings.ShowControlsPage) pages.Add(Page.Controls);
+        if (_settings.ShowSystemPage) pages.Add(Page.System);
         if (_shelf.Items.Count > 0 || _dropActive) pages.Add(Page.Shelf);
 
+        CallPage.Visibility = pages.Contains(Page.Call) ? Visibility.Visible : Visibility.Collapsed;
+        ControlsPage.Visibility = pages.Contains(Page.Controls) ? Visibility.Visible : Visibility.Collapsed;
+        SystemPage.Visibility = pages.Contains(Page.System) ? Visibility.Visible : Visibility.Collapsed;
+        TodayPage.Height = PageHeight(Page.Today);
         MediaPage.Visibility = pages.Contains(Page.Media) ? Visibility.Visible : Visibility.Collapsed;
         bool lyricsShown = LyricsPage.Visibility == Visibility.Visible;
         LyricsPage.Visibility = pages.Contains(Page.Lyrics) ? Visibility.Visible : Visibility.Collapsed;
@@ -767,6 +850,9 @@ public partial class IslandWindow : Window
 
     private FrameworkElement PageElement(Page page) => page switch
     {
+        Page.Call => CallPage,
+        Page.Controls => ControlsPage,
+        Page.System => SystemPage,
         Page.Media => MediaPage,
         Page.Lyrics => LyricsPage,
         Page.Timer => TimerPage,
@@ -932,6 +1018,12 @@ public partial class IslandWindow : Window
                 break;
             case "calendar-setup":
                 OpenCalendarDialog();
+                break;
+            case "open-call-app":
+                OpenCallApp();
+                break;
+            case "open-settings":
+                OpenSettings();
                 break;
         }
     }
@@ -1106,25 +1198,31 @@ public partial class IslandWindow : Window
                 return;
             }
 
-            // Desktop apps ("Spotify.exe", "Chrome"): find their window and bring it forward.
             string name = System.IO.Path.GetFileNameWithoutExtension(id);
-            foreach (var process in Process.GetProcessesByName(name))
-            {
-                nint window = process.MainWindowHandle;
-                process.Dispose();
-                if (window == 0) continue;
-                Native.ShowWindow(window, Native.IsIconic(window) ? Native.SW_RESTORE : Native.SW_SHOW);
-                Native.SetForegroundWindow(window);
-                return;
-            }
-
-            // Hidden in the tray: starting it again makes single-instance players show themselves.
-            Process.Start(new ProcessStartInfo(name + ".exe") { UseShellExecute = true });
+            BringToFront(name, name + ".exe");
         }
         catch (Exception ex)
         {
             Log.Error(ex);
         }
+    }
+
+    /// <summary>
+    /// Desktop apps ("Spotify", "Zoom"): find their window and bring it forward; when it is hidden
+    /// in the tray, starting it again makes single-instance apps show themselves.
+    /// </summary>
+    private static void BringToFront(string processName, string start)
+    {
+        foreach (var process in Process.GetProcessesByName(processName))
+        {
+            nint window = process.MainWindowHandle;
+            process.Dispose();
+            if (window == 0) continue;
+            Native.ShowWindow(window, Native.IsIconic(window) ? Native.SW_RESTORE : Native.SW_SHOW);
+            Native.SetForegroundWindow(window);
+            return;
+        }
+        Process.Start(new ProcessStartInfo(start) { UseShellExecute = true });
     }
 
     /// <summary>Starts or activates an app by its app id, like clicking it in the Start menu.</summary>
@@ -1429,6 +1527,7 @@ public partial class IslandWindow : Window
 
     private void OnVolumeChanged(float level, bool muted)
     {
+        if (_view == View.Expanded && _page == Page.Controls) UpdateControls();
         // Feedback for the user's own scroll / middle click shows even when volume notifications are off.
         bool fromGesture = DateTime.UtcNow - _lastVolumeGesture < TimeSpan.FromMilliseconds(600);
         if ((!_settings.ShowVolume && !fromGesture) || _hiddenForFullscreen) return;
@@ -1523,6 +1622,53 @@ public partial class IslandWindow : Window
         IdleCameraDot.Visibility = CompactCameraDot.Visibility = camera;
     }
 
+    // ───────────────────────────── call pill ─────────────────────────────
+
+    /// <summary>Call pill and call page: which app, how long, and whether the microphone is muted.</summary>
+    private void UpdateCall()
+    {
+        if (_privacy?.Microphone is not { } app) return;
+        _micMuted = MicrophoneMute.Get();
+        bool muted = _micMuted == true;
+        string duration = FormatTime(DateTime.UtcNow - app.StartedUtc);
+
+        CompactCallApp.Text = app.Name;
+        CompactCallTime.Text = duration;
+        var accent = (Brush)FindResource(muted ? "WarningBrush" : "CallBrush");
+        CompactCall.Background = CallBadge.Background = CompactCallTime.Foreground = accent;
+        CompactCallSlash.Visibility = CallSlash.Visibility = muted ? Visibility.Visible : Visibility.Collapsed;
+        CallGlow.Color = ((SolidColorBrush)accent).Color;
+
+        CallApp.Text = app.Name;
+        string state = _micMuted is null ? "Mikrofon aktif" : muted ? "Mikrofon dibisukan" : "Mikrofon aktif";
+        CallStatus.Text = _cameraApp is not null ? $"{state} · kamera · {duration}" : $"{state} · {duration}";
+        CallMuteButton.Content = muted ? "Nyalakan" : "Bisukan";
+        CallMuteButton.IsEnabled = _micMuted is not null;
+        CallMuteButton.Background = muted ? (Brush)FindResource("WarningBrush") : (Brush)FindResource("TrackBrush");
+    }
+
+    private void CallMute_Click(object sender, RoutedEventArgs e)
+    {
+        MicrophoneMute.Toggle();
+        UpdateCall();
+        UpdateControls();
+    }
+
+    /// <summary>Brings the app that is using the microphone (the meeting) to the front.</summary>
+    private void OpenCallApp()
+    {
+        if (_privacy?.Microphone is not { } app) return;
+        try
+        {
+            if (app.ExePath is { } path) BringToFront(System.IO.Path.GetFileNameWithoutExtension(path), path);
+            else LaunchApp(app.Key + "!App"); // Store apps: their main entry is almost always "App"
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+    }
+
     // ───────────────────────────── power & today page ─────────────────────────────
 
     private void OnPowerChanged()
@@ -1573,6 +1719,7 @@ public partial class IslandWindow : Window
         ClockDate.Text = now.ToString("dddd, d MMMM", culture);
         UpdateWeekStrip(now.Date);
         UpdateAgenda(now);
+        UpdateWeather();
 
         var power = _power.State;
         ClockBattery.Visibility = power.HasBattery ? Visibility.Visible : Visibility.Collapsed;
@@ -1650,6 +1797,232 @@ public partial class IslandWindow : Window
             };
             WeekStrip.Children.Add(new StackPanel { Children = { name, circle, dot } });
         }
+    }
+
+    private void OnWeatherChanged()
+    {
+        if (_view == View.Expanded) UpdateToday();
+        if (_view == View.Expanded && _page == Page.Today) ApplyState(); // the row may appear or go
+    }
+
+    /// <summary>Weather row: now (icon, temperature, description · city) and the next three hours.</summary>
+    private void UpdateWeather()
+    {
+        var state = _weather.State;
+        WeatherRow.Visibility = state == WeatherState.Off ? Visibility.Collapsed : Visibility.Visible;
+        bool setup = state is WeatherState.NoLocation or WeatherState.Failed && _weather.Forecast is null;
+        WeatherRow.Tag = setup ? "open-settings" : null; // tap the hint to set a city
+        WeatherRow.Background = setup ? Brushes.Transparent : null;
+        WeatherRow.Cursor = setup ? Cursors.Hand : null;
+        if (state == WeatherState.Off) return;
+
+        if (_weather.Forecast is not { } forecast)
+        {
+            WeatherNowIcon.Visibility = Visibility.Collapsed;
+            WeatherNowTemp.Text = "";
+            WeatherNowText.MaxWidth = double.PositiveInfinity;
+            WeatherNowText.Text = state switch
+            {
+                WeatherState.NoLocation => "Cuaca: atur kota di Pengaturan",
+                WeatherState.Failed => "Cuaca tidak bisa dimuat",
+                _ => "Memuat cuaca…",
+            };
+            WeatherHours.Children.Clear();
+            _shownForecast = null;
+            return;
+        }
+
+        WeatherNowIcon.Visibility = Visibility.Visible;
+        WeatherNowIcon.Kind = (int)WeatherForecast.KindOf(forecast.Code);
+        WeatherNowIcon.IsDay = forecast.IsDay;
+        WeatherNowTemp.Text = $"{Math.Round(forecast.Temperature):0}°";
+        WeatherNowText.MaxWidth = 96;
+        WeatherNowText.Text = WeatherForecast.Describe(forecast.Code);
+        WeatherRow.ToolTip = _weather.PlaceName.Length > 0 ? $"{WeatherForecast.Describe(forecast.Code)} · {_weather.PlaceName}" : null;
+        if (ReferenceEquals(forecast, _shownForecast)) return;
+        _shownForecast = forecast;
+
+        WeatherHours.Children.Clear();
+        foreach (var hour in forecast.Hours.Take(3))
+        {
+            WeatherHours.Children.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(8, 0, 0, 0),
+                Children =
+                {
+                    new TextBlock { Text = hour.Time.ToString("HH", CultureInfo.InvariantCulture), FontSize = 11, Foreground = (Brush)FindResource("TertiaryText"), VerticalAlignment = VerticalAlignment.Center },
+                    new Controls.WeatherIcon { Kind = (int)WeatherForecast.KindOf(hour.Code), IsDay = hour.IsDay, Width = 15, Height = 15, Margin = new Thickness(3, 0, 2, 0) },
+                    new TextBlock { Text = $"{Math.Round(hour.Temperature):0}°", FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center },
+                },
+            });
+        }
+    }
+
+    // ───────────────────────────── controls page ─────────────────────────────
+
+    private void BuildControls()
+    {
+        AddControl("wifi", "Wi-Fi", "IconWifiDot", "IconWifi", () =>
+        {
+            if (_quick.WifiOn is { } on) _quick.SetWifi(!on);
+        });
+        AddControl("bluetooth", "Bluetooth", null, "IconBluetooth", () =>
+        {
+            if (_quick.BluetoothOn is { } on) _quick.SetBluetooth(!on);
+        });
+        AddControl("mic", "Mikrofon", "IconMicBody", "IconMicStand", () =>
+        {
+            MicrophoneMute.Toggle();
+            if (ShowsCall) UpdateCall();
+        });
+        AddControl("sound", "Suara", "IconSpeaker", "IconSpeakerWaves", () => _volume?.ToggleMute());
+        AddControl("dark", "Mode gelap", "IconMoon", null, () => QuickControls.SetDarkMode(!QuickControls.DarkMode));
+    }
+
+    private void AddControl(string key, string label, string? fillIcon, string? strokeIcon, Action toggle)
+    {
+        var icon = new Grid { Width = 16, Height = 16 };
+        if (fillIcon is not null) icon.Children.Add(new System.Windows.Shapes.Path { Data = (Geometry)FindResource(fillIcon), Fill = Brushes.White });
+        if (strokeIcon is not null)
+        {
+            icon.Children.Add(new System.Windows.Shapes.Path
+            {
+                Data = (Geometry)FindResource(strokeIcon),
+                Style = (Style)FindResource("StrokeIcon"),
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeThickness = key == "mic" ? 1.8 : 1.5,
+            });
+        }
+        var slash = new System.Windows.Shapes.Path
+        {
+            Data = (Geometry)FindResource("IconSlash"),
+            Style = (Style)FindResource("StrokeIcon"),
+            StrokeThickness = 1.8,
+            Visibility = Visibility.Collapsed,
+        };
+        icon.Children.Add(slash);
+
+        var button = new Button { Style = (Style)FindResource("ControlButton"), Content = new Viewbox { Width = 19, Height = 19, Child = icon } };
+        System.Windows.Automation.AutomationProperties.SetName(button, label);
+        button.Click += (_, _) =>
+        {
+            toggle();
+            UpdateControls();
+        };
+        var state = new TextBlock { FontSize = 10.5, Foreground = (Brush)FindResource("TertiaryText"), HorizontalAlignment = HorizontalAlignment.Center };
+        ControlsGrid.Children.Add(new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children =
+            {
+                button,
+                new TextBlock { Text = label, FontSize = 11.5, Margin = new Thickness(0, 7, 0, 0), HorizontalAlignment = HorizontalAlignment.Center },
+                state,
+            },
+        });
+        _controls[key] = new QuickControl(button, slash, state);
+    }
+
+    /// <summary>Wi-Fi / Bluetooth light up blue when on; microphone and sound turn red (struck through) when muted.</summary>
+    private void UpdateControls()
+    {
+        if (_controls.Count == 0) return;
+        var blue = (Brush)FindResource("CalendarBrush");
+        var red = (Brush)FindResource("WarningBrush");
+        SetControl("wifi", _quick.WifiOn, blue, "Nyala", "Mati", slash: false);
+        SetControl("bluetooth", _quick.BluetoothOn, blue, "Nyala", "Mati", slash: false);
+        SetControl("mic", MicrophoneMute.Get(), red, "Dibisukan", "Aktif", slash: true);
+        SetControl("sound", _volume is { HasDevice: true } volume ? volume.IsMuted : null, red, "Senyap", "Nyala", slash: true);
+        SetControl("dark", QuickControls.DarkMode, new SolidColorBrush(Color.FromRgb(0x5E, 0x5C, 0xE6)), "Aktif", "Mati", slash: false);
+    }
+
+    private void SetControl(string key, bool? active, Brush activeBrush, string activeText, string inactiveText, bool slash)
+    {
+        var control = _controls[key];
+        control.Button.IsEnabled = active is not null;
+        control.Button.Background = active == true ? activeBrush : (Brush)FindResource("ControlOffBrush");
+        control.Slash.Visibility = slash && active == true ? Visibility.Visible : Visibility.Collapsed;
+        control.State.Text = active is null ? "Tidak ada" : active.Value ? activeText : inactiveText;
+    }
+
+    // ───────────────────────────── system page ─────────────────────────────
+
+    private void UpdateSystem()
+    {
+        _stats.Sample();
+        bool warm = _stats.CpuHistory.Count > 0; // the first reading only sets the baseline
+        CpuText.Text = warm ? $"{_stats.Cpu * 100:0}%" : "…";
+        CpuSpark.SetValues(_stats.CpuHistory);
+
+        MemoryText.Text = $"{FormatBytes((long)_stats.MemoryUsed)} / {FormatBytes((long)_stats.MemoryTotal)}";
+        SetProgress(MemoryUsed, MemoryFree, _stats.MemoryTotal > 0 ? (double)_stats.MemoryUsed / _stats.MemoryTotal : 0);
+
+        NetDownText.Text = "↓ " + FormatRate(_stats.Download);
+        NetUpText.Text = "↑ " + FormatRate(_stats.Upload);
+
+        DiskLabel.Text = $"Disk {_stats.Drive}";
+        DiskText.Text = _stats.DriveTotal > 0 ? $"{FormatBytes(_stats.DriveFree)} kosong" : "–";
+        SetProgress(DiskUsed, DiskFree, _stats.DriveTotal > 0 ? 1 - (double)_stats.DriveFree / _stats.DriveTotal : 0);
+    }
+
+    // ───────────────────────────── screenshots & downloads ─────────────────────────────
+
+    /// <summary>A new screenshot (big thumbnail) or a finished download (its icon): drag it out, open it, show it, or keep it on the shelf.</summary>
+    private void ShowFile(string path, bool screenshot)
+    {
+        if (_hiddenForFullscreen || !System.IO.File.Exists(path)) return;
+        _filePath = path;
+        long size = 0;
+        try
+        {
+            size = new System.IO.FileInfo(path).Length;
+        }
+        catch (System.IO.IOException)
+        {
+            // Being replaced already; show it without a size.
+        }
+
+        FileTitle.Text = screenshot ? "Screenshot" : "Unduhan selesai";
+        FileName.Text = $"{System.IO.Path.GetFileName(path)} · {FormatBytes(size)}";
+        FileThumb.Width = screenshot ? 92 : 40;
+        FileThumb.Height = screenshot ? 54 : 40;
+        ImageSource? thumbnail = screenshot ? LoadPicture(path, 184) : ShellThumbnail.Get(path, 80);
+        FileThumb.Background = thumbnail is null
+            ? (Brush)FindResource("ArtPlaceholder")
+            : new ImageBrush(thumbnail) { Stretch = screenshot ? Stretch.UniformToFill : Stretch.Uniform };
+        FileThumb.BorderThickness = new Thickness(screenshot ? 1 : 0);
+        ShowActivity(ActivityKind.File, FilePanel, 400, screenshot ? 74 : 60, FileDuration);
+    }
+
+    private void OpenCurrentFile()
+    {
+        if (_filePath is null) return;
+        OpenShelfItem(new ShelfItem(_filePath));
+        EndActivity();
+    }
+
+    private void FileOpen_Click(object sender, RoutedEventArgs e) => OpenCurrentFile();
+
+    private void FileFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (_filePath is null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_filePath}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+        EndActivity();
+    }
+
+    private void FileShelf_Click(object sender, RoutedEventArgs e)
+    {
+        if (_filePath is null) return;
+        _shelf.Add([_filePath]);
+        EndActivity();
     }
 
     /// <summary>Agenda card: what is on now / next, today and tomorrow (rebuilt at most once a minute).</summary>
@@ -1745,6 +2118,7 @@ public partial class IslandWindow : Window
 
     private void OnCalendarChanged()
     {
+        _settingsWindow?.RefreshCalendar();
         _agendaKey = "";
         _weekStripDate = default; // redraw the busy-day dots
         if (_view == View.Expanded) UpdateToday();
@@ -1931,14 +2305,14 @@ public partial class IslandWindow : Window
         return id.Split('.', '\\', '/').LastOrDefault(p => p.Length > 0) ?? appId;
     }
 
-    private static BitmapSource? LoadPicture(string path)
+    private static BitmapSource? LoadPicture(string path, int width = 72)
     {
         try
         {
             var image = new BitmapImage();
             image.BeginInit();
             image.UriSource = new Uri(path);
-            image.DecodePixelWidth = 72;
+            image.DecodePixelWidth = width;
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             image.EndInit();
@@ -2058,7 +2432,7 @@ public partial class IslandWindow : Window
             remove.Visibility = Visibility.Collapsed;
             AnimateScale(thumbnail, 1);
         };
-        AttachDragOut(tile, () => [item], open: item);
+        AttachDragOut(tile, () => [item], onClick: () => OpenShelfItem(item));
         return tile;
     }
 
@@ -2099,7 +2473,7 @@ public partial class IslandWindow : Window
                 },
             },
         };
-        AttachDragOut(tile, () => rest, open: null);
+        AttachDragOut(tile, () => rest, onClick: null);
         return tile;
     }
 
@@ -2127,8 +2501,8 @@ public partial class IslandWindow : Window
         scale.BeginAnimation(ScaleTransform.ScaleYProperty, animation);
     }
 
-    /// <summary>Press + move = drag the files out; press + release = open (when <paramref name="open"/> is given).</summary>
-    private void AttachDragOut(FrameworkElement element, Func<IReadOnlyList<ShelfItem>> items, ShelfItem? open)
+    /// <summary>Press + move = drag the files out; press + release = <paramref name="onClick"/> (e.g. open it).</summary>
+    private void AttachDragOut(FrameworkElement element, Func<IReadOnlyList<ShelfItem>> items, Action? onClick)
     {
         element.MouseLeftButtonDown += (_, e) =>
         {
@@ -2153,7 +2527,7 @@ public partial class IslandWindow : Window
             if (!ReferenceEquals(_pressedTile, element)) return;
             _pressedTile = null;
             element.ReleaseMouseCapture();
-            if (open is not null) OpenShelfItem(open);
+            onClick?.Invoke();
         };
     }
 
@@ -2291,8 +2665,8 @@ public partial class IslandWindow : Window
     {
         _leaveTimer.Stop();
 
-        // Reading a notification: keep it up and don't open the island underneath the pointer.
-        if (_activity == ActivityKind.Notification)
+        // Reading a notification or a file preview: keep it up and don't open the island underneath the pointer.
+        if (_activity is ActivityKind.Notification or ActivityKind.File)
         {
             _activityTimer.Stop();
             return;
@@ -2316,7 +2690,7 @@ public partial class IslandWindow : Window
     private void Shape_MouseLeave(object sender, MouseEventArgs e)
     {
         _hoverTimer.Stop();
-        if (_activity == ActivityKind.Notification)
+        if (_activity is ActivityKind.Notification or ActivityKind.File)
         {
             _activityTimer.Interval = TimeSpan.FromSeconds(2);
             _activityTimer.Start();
@@ -2342,6 +2716,13 @@ public partial class IslandWindow : Window
             return;
         }
 
+        // Clicking a file preview opens the file.
+        if (_activity == ActivityKind.File)
+        {
+            OpenCurrentFile();
+            return;
+        }
+
         // Clicking a notification opens the app it came from.
         if (_activity == ActivityKind.Notification && _notification is { } notification)
         {
@@ -2354,149 +2735,13 @@ public partial class IslandWindow : Window
         SetExpanded(true);
     }
 
-    // ───────────────────────────── settings menu ─────────────────────────────
+    // ───────────────────────────── menu & settings ─────────────────────────────
 
-    private void Menu_Opened(object sender, RoutedEventArgs e)
-    {
-        MenuTimerStop.IsEnabled = _timer.IsActive;
-        MenuIsland.IsChecked = _settings.Style == IslandStyle.Island;
-        MenuNotch.IsChecked = _settings.Style == IslandStyle.Notch;
-        MenuVolume.IsChecked = _settings.ShowVolume;
-        MenuTracks.IsChecked = _settings.ShowTrackChanges;
-        MenuDevices.IsChecked = _settings.ShowDeviceChanges;
-        MenuPrivacy.IsChecked = _settings.ShowPrivacy;
-        MenuLyrics.IsChecked = _settings.ShowLyrics;
-        MenuCompactLyrics.IsChecked = _settings.CompactLyrics;
-        MenuCompactLyrics.IsEnabled = _settings.ShowLyrics;
-        MenuVisualizer.IsChecked = _settings.LiveVisualizer;
-        MenuRim.IsChecked = _settings.AccentRim;
-        MenuApps.IsChecked = _settings.ShowAppNotifications && NotificationWatcher.IsSupported;
-        MenuApps.IsEnabled = NotificationWatcher.IsSupported;
-        MenuAppContent.IsChecked = _settings.ShowNotificationContent;
-        MenuAppContent.IsEnabled = MenuApps.IsChecked;
-        MenuNoDouble.IsChecked = _settings.HideWindowsBanners;
-        MenuNoDouble.IsEnabled = MenuApps.IsChecked;
-        MenuSlim.IsChecked = _settings.SlimWhenIdle;
-        MenuReserve.IsChecked = _settings.ReserveTopSpace;
-        MenuStartup.IsChecked = AppSettings.StartWithWindows;
-    }
+    private void Menu_Opened(object sender, RoutedEventArgs e) => MenuTimerStop.IsEnabled = _timer.IsActive;
 
     private void MenuCalendar_Click(object sender, RoutedEventArgs e) => OpenCalendarDialog();
 
-    private void MenuApps_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowAppNotifications = !_settings.ShowAppNotifications;
-        _settings.Save();
-        if (_settings.ShowAppNotifications)
-        {
-            _notifications?.Start();
-            _banners.ApplyAll();
-        }
-        else
-        {
-            _notifications?.Stop();
-            _banners.RestoreAll(forget: false); // the island no longer shows them: Windows must again
-        }
-    }
-
-    private void MenuNoDouble_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.HideWindowsBanners = !_settings.HideWindowsBanners;
-        _settings.Save();
-        if (!_settings.HideWindowsBanners) _banners.RestoreAll(forget: true);
-    }
-
-    private void MenuSlim_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.SlimWhenIdle = !_settings.SlimWhenIdle;
-        _settings.Save();
-        ApplyState();
-    }
-
-    private void MenuReserve_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ReserveTopSpace = !_settings.ReserveTopSpace;
-        _settings.Save();
-        ApplyReservation();
-        PositionWindow();
-    }
-
-    private void MenuAppContent_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowNotificationContent = !_settings.ShowNotificationContent;
-        _settings.Save();
-    }
-
-    private void MenuVisualizer_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.LiveVisualizer = !_settings.LiveVisualizer;
-        _settings.Save();
-        ConfigureVisuals();
-    }
-
-    private void MenuRim_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.AccentRim = !_settings.AccentRim;
-        _settings.Save();
-        ConfigureVisuals();
-    }
-
-    private void MenuIsland_Click(object sender, RoutedEventArgs e) => SetStyle(IslandStyle.Island);
-
-    private void MenuNotch_Click(object sender, RoutedEventArgs e) => SetStyle(IslandStyle.Notch);
-
-    private void MenuVolume_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowVolume = !_settings.ShowVolume;
-        _settings.Save();
-    }
-
-    private void MenuTracks_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowTrackChanges = !_settings.ShowTrackChanges;
-        _settings.Save();
-    }
-
-    private void MenuDevices_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowDeviceChanges = !_settings.ShowDeviceChanges;
-        _settings.Save();
-    }
-
-    private void MenuPrivacy_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowPrivacy = !_settings.ShowPrivacy;
-        _settings.Save();
-        UpdatePrivacyDots();
-        ApplyState();
-    }
-
-    private void MenuLyrics_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.ShowLyrics = !_settings.ShowLyrics;
-        _settings.Save();
-        LoadLyrics();
-        ApplyState();
-    }
-
-    private void MenuCompactLyrics_Click(object sender, RoutedEventArgs e)
-    {
-        _settings.CompactLyrics = !_settings.CompactLyrics;
-        _settings.Save();
-        ApplyState();
-    }
-
-    private void MenuStartup_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            AppSettings.StartWithWindows = !AppSettings.StartWithWindows;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex);
-        }
-    }
+    private void MenuSettings_Click(object sender, RoutedEventArgs e) => OpenSettings();
 
     private void MenuExit_Click(object sender, RoutedEventArgs e)
     {
@@ -2504,13 +2749,79 @@ public partial class IslandWindow : Window
         Application.Current.Shutdown();
     }
 
-    private void SetStyle(IslandStyle style)
+    private void OpenSettings()
     {
-        _settings.Style = style;
-        _settings.Save();
-        ApplyStyle();
-        ApplyReservation(); // the notch needs a lower strip than the floating island
-        ApplyState();
+        if (_settingsWindow is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        var window = _settingsWindow = new SettingsWindow(_settings, CalendarStatusText);
+        window.Changed += ApplySetting;
+        window.CalendarRequested += OpenCalendarDialog;
+        window.Closed += (_, _) => _settingsWindow = null;
+        window.Show();
+        window.Activate();
+    }
+
+    private string CalendarStatusText() => _calendar.State switch
+    {
+        CalendarState.Off => "Belum terhubung",
+        CalendarState.Loading => "Memuat…",
+        CalendarState.Failed => "Link tidak bisa dimuat",
+        _ => "Terhubung",
+    };
+
+    /// <summary>Side effects of a setting the settings window just changed (and saved).</summary>
+    private void ApplySetting(string name)
+    {
+        switch (name)
+        {
+            case nameof(AppSettings.Style):
+                ApplyStyle();
+                ApplyReservation(); // the notch needs a lower strip than the floating island
+                break;
+            case nameof(AppSettings.ReserveTopSpace):
+                ApplyReservation();
+                PositionWindow();
+                break;
+            case nameof(AppSettings.ShowPrivacy):
+                UpdatePrivacyDots();
+                break;
+            case nameof(AppSettings.ShowLyrics):
+                LoadLyrics();
+                break;
+            case nameof(AppSettings.ShowAppNotifications):
+                if (_settings.ShowAppNotifications)
+                {
+                    _notifications?.Start();
+                    _banners.ApplyAll();
+                }
+                else
+                {
+                    _notifications?.Stop();
+                    _banners.RestoreAll(forget: false); // the island no longer shows them: Windows must again
+                }
+                break;
+            case nameof(AppSettings.HideWindowsBanners):
+                if (!_settings.HideWindowsBanners) _banners.RestoreAll(forget: true);
+                break;
+            case nameof(AppSettings.ShowWeather):
+            case nameof(AppSettings.WeatherCity):
+                _weather.Configure(_settings.ShowWeather, _settings.WeatherCity);
+                break;
+            case nameof(AppSettings.ShowScreenshots):
+                if (_screenshots is not null) _screenshots.Enabled = _settings.ShowScreenshots;
+                break;
+            case nameof(AppSettings.ShowDownloads):
+                if (_downloads is not null) _downloads.Enabled = _settings.ShowDownloads;
+                break;
+            case nameof(AppSettings.ShowControlsPage):
+                if (_settings.ShowControlsPage) _quick.Start();
+                break;
+        }
+        ApplyState(); // pages, sizes, visuals: cheap to re-evaluate for any change
     }
 
     private void ApplyStyle()
@@ -2530,6 +2841,19 @@ public partial class IslandWindow : Window
         done.Width = new GridLength(fraction, GridUnitType.Star);
         rest.Width = new GridLength(1 - fraction, GridUnitType.Star);
     }
+
+    /// <summary>1536 → "1,5 KB", 6.2e9 → "5,8 GB" (in the user's number format).</summary>
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):0.0} GB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):0.0} MB",
+        >= 1L << 10 => $"{bytes / (double)(1L << 10):0} KB",
+        _ => $"{bytes} B",
+    };
+
+    private static string FormatRate(double bytesPerSecond) => bytesPerSecond >= 1 << 20
+        ? $"{bytesPerSecond / (1 << 20):0.0} MB/s"
+        : $"{bytesPerSecond / 1024:0} KB/s";
 
     private static string FormatTime(TimeSpan time)
     {

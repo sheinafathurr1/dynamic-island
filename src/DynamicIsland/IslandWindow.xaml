@@ -33,30 +33,7 @@
                         <MenuItem x:Name="MenuTimerStop" Header="Hentikan timer" Click="TimerStop_Click" />
                     </MenuItem>
                     <MenuItem x:Name="MenuCalendar" Header="Kalender (agenda)…" Click="MenuCalendar_Click" />
-                    <Separator />
-                    <MenuItem x:Name="MenuIsland" Header="Gaya island (melayang)" Click="MenuIsland_Click" />
-                    <MenuItem x:Name="MenuNotch" Header="Gaya notch (menempel di atas)" Click="MenuNotch_Click" />
-                    <MenuItem x:Name="MenuSlim" Header="Garis tipis saat tidak ada aktivitas" Click="MenuSlim_Click" />
-                    <MenuItem x:Name="MenuReserve" Header="Jangan tutupi jendela (sisakan ruang di atas)" Click="MenuReserve_Click" />
-                    <Separator />
-                    <MenuItem Header="Notifikasi">
-                        <MenuItem x:Name="MenuVolume" Header="Perubahan volume" Click="MenuVolume_Click" />
-                        <MenuItem x:Name="MenuTracks" Header="Lagu baru" Click="MenuTracks_Click" />
-                        <MenuItem x:Name="MenuDevices" Header="Ganti perangkat audio" Click="MenuDevices_Click" />
-                        <MenuItem x:Name="MenuPrivacy" Header="Mikrofon &amp; kamera aktif" Click="MenuPrivacy_Click" />
-                        <Separator />
-                        <MenuItem x:Name="MenuApps" Header="Notifikasi aplikasi (WhatsApp, Discord…)" Click="MenuApps_Click" />
-                        <MenuItem x:Name="MenuAppContent" Header="Tampilkan isi pesan" Click="MenuAppContent_Click" />
-                        <MenuItem x:Name="MenuNoDouble" Header="Tanpa banner Windows (tidak dobel)" Click="MenuNoDouble_Click" />
-                    </MenuItem>
-                    <MenuItem Header="Musik">
-                        <MenuItem x:Name="MenuLyrics" Header="Tampilkan lirik (lrclib.net)" Click="MenuLyrics_Click" />
-                        <MenuItem x:Name="MenuCompactLyrics" Header="Lirik di island ringkas" Click="MenuCompactLyrics_Click" />
-                        <Separator />
-                        <MenuItem x:Name="MenuVisualizer" Header="Equalizer mengikuti suara asli" Click="MenuVisualizer_Click" />
-                        <MenuItem x:Name="MenuRim" Header="Garis warna cover di pinggir island" Click="MenuRim_Click" />
-                    </MenuItem>
-                    <MenuItem x:Name="MenuStartup" Header="Jalankan saat Windows mulai" Click="MenuStartup_Click" />
+                    <MenuItem Header="Pengaturan…" Click="MenuSettings_Click" />
                     <Separator />
                     <MenuItem Header="Keluar" Click="MenuExit_Click" />
                 </ContextMenu>
@@ -102,7 +79,19 @@
                             </Border>
                             <c:ProgressRing x:Name="CompactRing" Width="18" Height="18" Margin="4,0,0,0" Thickness="2.6"
                                             RingBrush="{StaticResource TimerBrush}" TrackBrush="{StaticResource TimerTrackBrush}" Visibility="Collapsed" />
+                            <!-- In a call: green microphone (red and struck through when muted) -->
+                            <Border x:Name="CompactCall" Width="22" Height="22" CornerRadius="11" Background="{StaticResource CallBrush}" Visibility="Collapsed">
+                                <Viewbox Width="12" Height="12">
+                                    <Grid Width="16" Height="16">
+                                        <Path Data="{StaticResource IconMicBody}" Fill="White" />
+                                        <Path Data="{StaticResource IconMicStand}" Style="{StaticResource StrokeIcon}" StrokeThickness="2" />
+                                        <Path x:Name="CompactCallSlash" Data="{StaticResource IconSlash}" Style="{StaticResource StrokeIcon}" StrokeThickness="2.2" Visibility="Collapsed" />
+                                    </Grid>
+                                </Viewbox>
+                            </Border>
                         </Grid>
+                        <TextBlock x:Name="CompactCallApp" Grid.Column="1" Margin="9,0,8,0" FontSize="12.5" Foreground="{StaticResource SecondaryText}"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Visibility="Collapsed" />
                         <!-- Live lyrics: the line being sung right now; the previous one rolls up and out -->
                         <TextBlock x:Name="CompactLyricOld" Grid.Column="1" Margin="10,0,10,0" FontSize="12.5" FontWeight="SemiBold"
                                    TextAlignment="Center" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
@@ -135,6 +124,8 @@
                                      Fill="{StaticResource MicBrush}" Visibility="Collapsed" />
                             <Ellipse x:Name="CompactCameraDot" Width="6" Height="6" Margin="0,0,7,0" VerticalAlignment="Center"
                                      Fill="{StaticResource CameraBrush}" Visibility="Collapsed" />
+                            <TextBlock x:Name="CompactCallTime" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,0,0"
+                                       Foreground="{StaticResource CallBrush}" Visibility="Collapsed" />
                             <c:EqualizerBars x:Name="CompactEq" BarHeight="13" />
                             <TextBlock x:Name="CompactTimerText" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
                                        Foreground="{StaticResource TimerBrush}" Visibility="Collapsed" />
@@ -236,6 +227,49 @@
                             </StackPanel>
                         </Grid>
 
+                        <!-- A new screenshot or a finished download: thumbnail (drag it out), name, open / folder / shelf -->
+                        <Grid x:Name="FilePanel" Visibility="Collapsed" Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="FileThumb" Margin="12,0,12,0" CornerRadius="9" VerticalAlignment="Center" Cursor="SizeAll"
+                                    Background="{StaticResource ArtPlaceholder}" BorderBrush="#26FFFFFF" BorderThickness="1"
+                                    RenderOptions.BitmapScalingMode="HighQuality" ToolTip="Seret ke aplikasi atau folder" />
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock x:Name="FileTitle" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="FileName" FontSize="11.5" Foreground="{StaticResource SecondaryText}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <Button Style="{StaticResource IconButton}" Width="34" Height="34" Click="FileOpen_Click"
+                                        ToolTip="Buka" AutomationProperties.Name="Buka file">
+                                    <Viewbox Width="14" Height="14">
+                                        <Grid Width="16" Height="16">
+                                            <Path Data="{StaticResource IconOpenApp}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                                        </Grid>
+                                    </Viewbox>
+                                </Button>
+                                <Button Style="{StaticResource IconButton}" Width="34" Height="34" Click="FileFolder_Click"
+                                        ToolTip="Tampilkan di folder" AutomationProperties.Name="Tampilkan di folder">
+                                    <Viewbox Width="15" Height="15">
+                                        <Grid Width="16" Height="16">
+                                            <Path Data="{StaticResource IconFolder}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                                        </Grid>
+                                    </Viewbox>
+                                </Button>
+                                <Button Style="{StaticResource IconButton}" Width="34" Height="34" Click="FileShelf_Click"
+                                        ToolTip="Titipkan di island" AutomationProperties.Name="Titipkan">
+                                    <Viewbox Width="15" Height="15">
+                                        <Grid Width="16" Height="16">
+                                            <Path Data="{StaticResource IconTray}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                                        </Grid>
+                                    </Viewbox>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
                         <!-- Generic icon + title + subtitle: audio device, mic / camera, timer finished -->
                         <Grid x:Name="InfoPanel" Visibility="Collapsed">
                             <Grid.ColumnDefinitions>
@@ -265,6 +299,37 @@
                                 MouseLeftButtonUp="PageViewport_MouseLeftButtonUp"
                                 LostMouseCapture="PageViewport_LostMouseCapture">
                             <StackPanel x:Name="PageStrip" Orientation="Horizontal">
+
+                                <!-- Page: call (an app is using the microphone): app, duration, mute for every app -->
+                                <Grid x:Name="CallPage" Width="400" Height="104" VerticalAlignment="Top">
+                                    <Grid Margin="22,18,18,0" VerticalAlignment="Top">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- Tap to bring the call app to the front -->
+                                        <Border x:Name="CallBadge" Width="50" Height="50" CornerRadius="25" Background="{StaticResource CallBrush}"
+                                                Tag="open-call-app" Cursor="Hand" VerticalAlignment="Center">
+                                            <Border.Effect>
+                                                <DropShadowEffect x:Name="CallGlow" ShadowDepth="0" BlurRadius="18" Opacity="0.7" Color="#FF30D158" />
+                                            </Border.Effect>
+                                            <Viewbox Width="22" Height="22">
+                                                <Grid Width="16" Height="16">
+                                                    <Path Data="{StaticResource IconMicBody}" Fill="White" />
+                                                    <Path Data="{StaticResource IconMicStand}" Style="{StaticResource StrokeIcon}" StrokeThickness="1.8" />
+                                                    <Path x:Name="CallSlash" Data="{StaticResource IconSlash}" Style="{StaticResource StrokeIcon}" StrokeThickness="2" Visibility="Collapsed" />
+                                                </Grid>
+                                            </Viewbox>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="14,0,8,0" VerticalAlignment="Center">
+                                            <TextBlock x:Name="CallApp" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock x:Name="CallStatus" FontSize="12" Foreground="{StaticResource SecondaryText}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <Button x:Name="CallMuteButton" Grid.Column="2" Style="{StaticResource PillButton}" Padding="16,8" VerticalAlignment="Center"
+                                                Click="CallMute_Click" AutomationProperties.Name="Bisukan mikrofon" />
+                                    </Grid>
+                                </Grid>
 
                                 <!-- Page: music -->
                                 <Grid x:Name="MediaPage" Width="400" Height="176" VerticalAlignment="Top">
@@ -511,6 +576,7 @@
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="78" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <Grid>
                                             <Grid.ColumnDefinitions>
@@ -564,10 +630,83 @@
                                             </Border>
                                         </Grid>
                                         <!-- Seven columns, filled in code (localised day names, today highlighted, dots on busy days) -->
-                                        <UniformGrid x:Name="WeekStrip" Grid.Row="1" Rows="1" Columns="7" Margin="-6,10,-2,0" />
+                                        <!-- Weather now (icon, temperature, description · place) and the next hours -->
+                                        <Grid x:Name="WeatherRow" Grid.Row="1" Height="30" Margin="0,8,0,0" Visibility="Collapsed">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <c:WeatherIcon x:Name="WeatherNowIcon" Width="24" Height="24" />
+                                                <TextBlock x:Name="WeatherNowTemp" FontSize="16" FontWeight="SemiBold" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                                <TextBlock x:Name="WeatherNowText" FontSize="11.5" Foreground="{StaticResource SecondaryText}" Margin="8,1,0,0"
+                                                           VerticalAlignment="Center" MaxWidth="150" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="WeatherHours" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                        </Grid>
+                                        <UniformGrid x:Name="WeekStrip" Grid.Row="2" Rows="1" Columns="7" Margin="-6,10,-2,0" />
                                     </Grid>
                                 </Grid>
 
+
+                                <!-- Page: quick controls (filled in code: Wi-Fi, Bluetooth, microphone, sound, dark mode) -->
+                                <Grid x:Name="ControlsPage" Width="400" Height="112" VerticalAlignment="Top">
+                                    <UniformGrid x:Name="ControlsGrid" Rows="1" Columns="5" Margin="14,16,14,0" VerticalAlignment="Top" />
+                                </Grid>
+
+                                <!-- Page: system (CPU with history, memory, network speed, free disk) -->
+                                <Grid x:Name="SystemPage" Width="400" Height="146" VerticalAlignment="Top">
+                                    <Grid Margin="16,14,16,0" VerticalAlignment="Top">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="8" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="8" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Border Style="{StaticResource StatTile}">
+                                            <StackPanel>
+                                                <TextBlock Text="CPU" Style="{StaticResource StatLabel}" />
+                                                <TextBlock x:Name="CpuText" Style="{StaticResource StatValue}" />
+                                                <c:Sparkline x:Name="CpuSpark" Height="16" Margin="0,4,0,0" Stroke="{StaticResource CallBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Grid.Column="2" Style="{StaticResource StatTile}">
+                                            <StackPanel>
+                                                <TextBlock Text="Memori" Style="{StaticResource StatLabel}" />
+                                                <TextBlock x:Name="MemoryText" Style="{StaticResource StatValue}" />
+                                                <Grid Height="5" Margin="0,8,0,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition x:Name="MemoryUsed" Width="0*" />
+                                                        <ColumnDefinition x:Name="MemoryFree" Width="1*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.ColumnSpan="2" CornerRadius="2.5" Background="{StaticResource TrackBrush}" />
+                                                    <Border CornerRadius="2.5" Background="{StaticResource SaverBrush}" />
+                                                </Grid>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Grid.Row="2" Style="{StaticResource StatTile}">
+                                            <StackPanel>
+                                                <TextBlock Text="Internet" Style="{StaticResource StatLabel}" />
+                                                <TextBlock x:Name="NetDownText" Style="{StaticResource StatValue}" />
+                                                <TextBlock x:Name="NetUpText" FontSize="11" Foreground="{StaticResource SecondaryText}" Margin="0,1,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Grid.Row="2" Grid.Column="2" Style="{StaticResource StatTile}">
+                                            <StackPanel>
+                                                <TextBlock x:Name="DiskLabel" Style="{StaticResource StatLabel}" />
+                                                <TextBlock x:Name="DiskText" Style="{StaticResource StatValue}" />
+                                                <Grid Height="5" Margin="0,8,0,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition x:Name="DiskUsed" Width="0*" />
+                                                        <ColumnDefinition x:Name="DiskFree" Width="1*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.ColumnSpan="2" CornerRadius="2.5" Background="{StaticResource TrackBrush}" />
+                                                    <Border CornerRadius="2.5" Background="{StaticResource CalendarBrush}" />
+                                                </Grid>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </Grid>
 
                                 <!-- Page: file shelf ("titipan"), like NotchDrop -->
                                 <Grid x:Name="ShelfPage" Width="400" Height="134" VerticalAlignment="Top">

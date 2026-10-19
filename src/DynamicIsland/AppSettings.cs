@@ -65,6 +65,24 @@ internal sealed class AppSettings
     /// <summary>Apps whose Windows banner the island switched off (and turns back on when it closes).</summary>
     public List<string> BannerHiddenApps { get; set; } = [];
 
+    /// <summary>Page with Wi-Fi, Bluetooth, microphone, sound and dark-mode switches.</summary>
+    public bool ShowControlsPage { get; set; } = true;
+
+    /// <summary>Page with CPU, memory, network and disk.</summary>
+    public bool ShowSystemPage { get; set; } = true;
+
+    /// <summary>Weather on the "today" page (Open-Meteo).</summary>
+    public bool ShowWeather { get; set; } = true;
+
+    /// <summary>City for the weather; empty = Windows' location.</summary>
+    public string WeatherCity { get; set; } = "";
+
+    /// <summary>Preview of new screenshots (Win+Shift+S, PrtSc, Win+PrtSc).</summary>
+    public bool ShowScreenshots { get; set; } = true;
+
+    /// <summary>A note when a download in the Downloads folder finishes.</summary>
+    public bool ShowDownloads { get; set; } = true;
+
     public static AppSettings Load()
     {
         try

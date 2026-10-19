@@ -306,6 +306,30 @@ function Show-NotificationDiagnostics {
     Write-Host ([WpnProbe]::Query($db, "SELECT n.rowid, n.Id, n.Type, h.PrimaryId, n.ArrivalTime, CAST(n.Payload AS TEXT) FROM Notification n LEFT JOIN NotificationHandler h ON h.RecordId = n.HandlerId ORDER BY n.rowid DESC LIMIT 6"))
 }
 
+# The settings window: right-click the island → "Pengaturan…". The script is read as ANSI by
+# Windows PowerShell, so the ellipsis is spelled as a char code.
+function Open-Settings([int]$Y) {
+    [SmokeInput]::RightClick($centerX, $Y)
+    Start-Sleep -Milliseconds 1000
+    Invoke-ByName ("Pengaturan" + [char]0x2026)
+    Start-Sleep -Milliseconds 1500
+}
+
+function Close-Settings {
+    Invoke-ByName "Tutup pengaturan"
+    Start-Sleep -Milliseconds 800
+}
+
+function Toggle-ByName([string]$Name) {
+    (Find-ByName $Name).GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    Write-Host "Toggled '$Name'"
+}
+
+function Select-ByName([string]$Name) {
+    (Find-ByName $Name).GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Write-Host "Selected '$Name'"
+}
+
 # Like Find-ByName, but for checks that depend on the runner: $null instead of failing.
 function Try-FindByName([string]$Name, [int]$TimeoutSeconds = 6) {
     try { return Find-ByName $Name $TimeoutSeconds } catch { return $null }
@@ -331,6 +355,20 @@ $dataDir = Join-Path $env:APPDATA "DynamicIsland"
 Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 ConvertTo-Json @($photo, (Join-Path $files "Proyek Skripsi")) | Set-Content -Path (Join-Path $dataDir "shelf.json") -Encoding UTF8
+
+# A pretend call later on: Windows notes apps that record from the microphone in its privacy
+# consent store, which is what the island watches. Make sure the store exists before launching.
+# (The key name holds "C:", which PowerShell's registry paths dislike: use .NET's registry API.)
+$consent = "Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged"
+[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($consent).Dispose()
+$callKey = "$consent\C:#Program Files#Zoom#bin#Zoom.exe"
+[Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($callKey, $false)
+function Set-CallTimes([long]$Start, [long]$Stop) {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($callKey)
+    $key.SetValue("LastUsedTimeStart", $Start, [Microsoft.Win32.RegistryValueKind]::QWord)
+    $key.SetValue("LastUsedTimeStop", $Stop, [Microsoft.Win32.RegistryValueKind]::QWord)
+    $key.Dispose()
+}
 
 # ── Launch ──────────────────────────────────────────────────────────────────────────────────────
 Move-Away
@@ -376,7 +414,21 @@ Start-Sleep -Milliseconds 1200
 Assert-Running
 Save-Shot "06-swiped-to-today"
 
-# Plain wheel down → next page: the file shelf with the two deposited items.
+# Plain wheel down → next pages: quick controls, system, then the file shelf with the two deposited items.
+[SmokeInput]::Wheel(-120)
+Start-Sleep -Milliseconds 1500
+Save-Shot "07a-controls"
+Invoke-ByName "Mode gelap"
+Start-Sleep -Milliseconds 800
+$light = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" -Name AppsUseLightTheme -ErrorAction SilentlyContinue).AppsUseLightTheme
+Write-Host "Dark mode switch: AppsUseLightTheme=$light"
+if ($light -ne 0) { throw "The dark mode switch did not switch Windows to dark mode" }
+Save-Shot "07a-controls-dark"
+Invoke-ByName "Mode gelap"   # and back
+Start-Sleep -Milliseconds 500
+[SmokeInput]::Wheel(-120)
+Start-Sleep -Milliseconds 2600   # two readings, so CPU and network show real numbers
+Save-Shot "07b-system"
 [SmokeInput]::Wheel(-120)
 Start-Sleep -Milliseconds 1500
 Save-Shot "07-shelf"
@@ -384,8 +436,9 @@ Save-Shot "07-shelf"
 Start-Sleep -Milliseconds 800
 Assert-Running
 
-# Click the first pagination dot (shelf page: island bottom = 8 + 134 + 16 = 158; dots 6+6+16 wide).
-[SmokeInput]::LeftClick($centerX - 17, 146)
+# Click the first pagination dot (shelf page: island bottom = 8 + 134 + 16 = 158; five dots of
+# 6+6 px with a 16 px pill for the current one, 6 px apart).
+[SmokeInput]::LeftClick($centerX - 29, 146)
 [SmokeInput]::SetCursorPos($centerX, 40) | Out-Null
 Start-Sleep -Milliseconds 1200
 Save-Shot "08-dot-click"
@@ -696,6 +749,16 @@ Move-Away
 Start-Sleep -Seconds 6
 Assert-Running
 
+# ── Settings window: what used to be the long right-click menu; set a city for the weather ─────
+Open-Settings $islandY
+Save-CenterShot "26-settings" 540 700
+(Find-ByName "Kota untuk cuaca").GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue("Jakarta")
+Close-Settings   # the city applies when the window closes
+$settingsJson = Get-Content (Join-Path $dataDir "settings.json") -Raw | ConvertFrom-Json
+if ($settingsJson.WeatherCity -ne "Jakarta") { throw "The weather city was not saved: '$($settingsJson.WeatherCity)'" }
+Move-Away
+Start-Sleep -Milliseconds 1500
+
 # ── Calendar: paste an iCal feed in the dialog, then look at the agenda ────────────────────────
 $now = Get-Date
 function Ics-Time($date) { $date.ToString("yyyyMMdd'T'HHmmss") }
@@ -755,14 +818,68 @@ Assert-Running
 Save-Shot "24-today-agenda"
 if (-not (Try-FindByName "Rapat tim mingguan")) { throw "The agenda does not show the calendar's current event" }
 Write-Host "Agenda: shows the calendar"
+if (Try-FindByName "Cuaca tidak bisa dimuat" 1) { Write-Host "Weather: could not be loaded on this runner" } else { Write-Host "Weather: shown" }
 Move-Away
 Start-Sleep -Milliseconds 1500
 if ($sound) { $sound.Stop() }
 
-# Switch to the notch style.
-[SmokeInput]::RightClick($centerX, $islandY)
+# ── Call pill: an app records from the microphone, as Windows' privacy store reports it ─────────
+$callStart = [DateTime]::UtcNow.AddSeconds(-125).ToFileTimeUtc()
+Set-CallTimes $callStart 0
+Start-Sleep -Milliseconds 4500   # first the "microphone on" note, then the pill
+Save-Shot "29-call-pill"
+if (-not (Try-FindByName "Zoom" 3)) { throw "The call pill does not show the app using the microphone" }
+[SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
+Start-Sleep -Milliseconds 1500
+Save-Shot "30-call-page"
+try {
+    Invoke-ByName "Bisukan mikrofon"
+    Start-Sleep -Milliseconds 900
+    Save-Shot "30b-call-muted"
+    Invoke-ByName "Bisukan mikrofon"   # and unmute again
+} catch {
+    Write-Host "Microphone mute not available on this runner: $_"
+}
+Move-Away
+Set-CallTimes $callStart ([DateTime]::UtcNow.ToFileTimeUtc())
+Start-Sleep -Milliseconds 2000
+[Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($callKey, $false)
+
+# ── Screenshot preview: Win+PrtSc saves the screen to Pictures\Screenshots ─────────────────────
+[SmokeInput]::Chord(0x5B, 0x2C)
+if (-not (Try-FindByName "Screenshot" 6)) {
+    Write-Host "Win+PrtSc saved nothing on this runner; dropping a picture into the Screenshots folder instead"
+    $screenshots = Join-Path ([Environment]::GetFolderPath("MyPictures")) "Screenshots"
+    Copy-Item $cover (Join-Path $screenshots "Screenshot test.png")
+    if (-not (Try-FindByName "Screenshot" 6)) { throw "No screenshot preview" }
+}
+Start-Sleep -Milliseconds 600
+Save-Shot "31-screenshot"
+Move-Away
+Start-Sleep -Seconds 7
+
+# ── Finished download: like a browser, write "x.crdownload" and rename it at the end ───────────
+$downloads = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+$partial = Join-Path $downloads "Laporan keuangan.pdf.crdownload"
+[IO.File]::WriteAllText($partial, "%PDF-1.4`n% test download`n" + ("x" * 4000))
+Start-Sleep -Milliseconds 500
+Rename-Item $partial "Laporan keuangan.pdf"
+$downloaded = Join-Path $downloads "Laporan keuangan.pdf"
+if (-not (Try-FindByName "Unduhan selesai" 8)) { throw "The finished download was not shown" }
+Start-Sleep -Milliseconds 500
+Save-Shot "32-download"
+Invoke-ByName "Titipkan"
 Start-Sleep -Milliseconds 1000
-Invoke-ByName "Gaya notch (menempel di atas)"
+$shelf = Get-Content (Join-Path $dataDir "shelf.json") -Raw | ConvertFrom-Json
+if (-not ($shelf -contains $downloaded)) { throw "'Titipkan' did not put the download on the shelf" }
+Write-Host "Download: shown and kept on the shelf"
+Move-Away
+Start-Sleep -Milliseconds 1500
+
+# Switch to the notch style in the settings window.
+Open-Settings $islandY
+Select-ByName "Notch (menempel)"
+Close-Settings
 Move-Away
 Start-Sleep -Milliseconds 1500
 Save-Shot "16-notch-idle"
@@ -773,9 +890,9 @@ Save-Shot "17-notch-today"
 # "Don't cover windows": the top strip is reserved, so a maximised window starts below the island.
 Move-Away
 Start-Sleep -Milliseconds 800
-[SmokeInput]::RightClick($centerX, 14)
-Start-Sleep -Milliseconds 1000
-Invoke-ByName "Jangan tutupi jendela (sisakan ruang di atas)"
+Open-Settings 14
+Toggle-ByName "Jangan tutupi jendela (sisakan ruang di atas)"
+Close-Settings
 Move-Away
 Start-Sleep -Milliseconds 1500
 $workTop = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Top
@@ -792,9 +909,9 @@ Start-Sleep -Milliseconds 1200
 Write-Host "Maximised window starts at y = $($window.Top) px"
 Save-Shot "25-reserved-space" 760 120
 $window.Close()
-[SmokeInput]::RightClick($centerX, 14)
-Start-Sleep -Milliseconds 1000
-Invoke-ByName "Jangan tutupi jendela (sisakan ruang di atas)"
+Open-Settings 14
+Toggle-ByName "Jangan tutupi jendela (sisakan ruang di atas)"
+Close-Settings
 Move-Away
 Start-Sleep -Milliseconds 1500
 $workTop = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Top

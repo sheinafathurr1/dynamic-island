@@ -33,15 +33,18 @@ internal sealed class PrivacyMonitor : IDisposable
 
         _microphone = RegistryWatch.TryCreate(ConsentStore + "microphone", OnRegistryChanged);
         _camera = RegistryWatch.TryCreate(ConsentStore + "webcam", OnRegistryChanged);
-        MicrophoneApp = FindActiveApp(_microphone);
-        CameraApp = FindActiveApp(_camera);
+        Microphone = FindActiveApp(_microphone);
+        CameraApp = FindActiveApp(_camera)?.Name;
     }
 
     /// <summary>Raised on the UI thread when an app starts or stops using the mic or camera.</summary>
     public event Action? Changed;
 
     /// <summary>Friendly name of the app using the microphone, or null when it is not in use.</summary>
-    public string? MicrophoneApp { get; private set; }
+    public string? MicrophoneApp => Microphone?.Name;
+
+    /// <summary>The app using the microphone (name, how to find it, since when), or null.</summary>
+    public CaptureApp? Microphone { get; private set; }
 
     /// <summary>Friendly name of the app using the camera, or null when it is not in use.</summary>
     public string? CameraApp { get; private set; }
@@ -67,15 +70,15 @@ internal sealed class PrivacyMonitor : IDisposable
         _camera?.Arm();
 
         var microphone = FindActiveApp(_microphone);
-        var camera = FindActiveApp(_camera);
-        if (microphone == MicrophoneApp && camera == CameraApp) return;
+        var camera = FindActiveApp(_camera)?.Name;
+        if (microphone?.Key == Microphone?.Key && camera == CameraApp) return;
 
-        MicrophoneApp = microphone;
+        Microphone = microphone;
         CameraApp = camera;
         Changed?.Invoke();
     }
 
-    private string? FindActiveApp(RegistryWatch? watch)
+    private CaptureApp? FindActiveApp(RegistryWatch? watch)
     {
         if (watch is null) return null;
         try
@@ -91,12 +94,12 @@ internal sealed class PrivacyMonitor : IDisposable
                     foreach (var exe in app.GetSubKeyNames())
                     {
                         using var entry = app.OpenSubKey(exe);
-                        if (IsInUse(entry)) return DesktopAppName(exe);
+                        if (IsInUse(entry)) return new CaptureApp(DesktopAppName(exe), exe, StartedAt(entry!));
                     }
                 }
                 else if (IsInUse(app))
                 {
-                    return PackagedAppName(name);
+                    return new CaptureApp(PackagedAppName(name), name, StartedAt(app));
                 }
             }
         }
@@ -106,6 +109,9 @@ internal sealed class PrivacyMonitor : IDisposable
         }
         return null;
     }
+
+    private static DateTime StartedAt(RegistryKey key) =>
+        key.GetValue("LastUsedTimeStart") is long start && start > 0 ? DateTime.FromFileTimeUtc(start) : DateTime.UtcNow;
 
     private static bool IsInUse(RegistryKey? key) =>
         key?.GetValue("LastUsedTimeStop") is long stop && stop == 0 &&
@@ -177,4 +183,15 @@ internal sealed class PrivacyMonitor : IDisposable
             _signal.Dispose();
         }
     }
+}
+
+/// <summary>
+/// An app recording from the microphone or camera. <paramref name="Key"/> is its exe path with '#'
+/// for '\' (desktop apps) or its package family name (Store apps).
+/// </summary>
+internal sealed record CaptureApp(string Name, string Key, DateTime StartedUtc)
+{
+    public bool IsDesktop => Key.Contains('#');
+
+    public string? ExePath => IsDesktop ? Key.Replace('#', '\\') : null;
 }

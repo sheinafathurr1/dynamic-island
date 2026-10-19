@@ -175,6 +175,83 @@ internal static class Native
         SafeWaitHandle hEvent,
         [MarshalAs(UnmanagedType.Bool)] bool asynchronous);
 
+    // ── System monitor ──
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MEMORYSTATUSEX
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetSystemTimes(out long idleTime, out long kernelTime, out long userTime);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX buffer);
+
+    // ── Clipboard (screenshots) ──
+
+    public const int WM_CLIPBOARDUPDATE = 0x031D;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AddClipboardFormatListener(nint hwnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RemoveClipboardFormatListener(nint hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetClipboardOwner();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
+
+    // ── Known folders ──
+
+    public static readonly Guid FOLDERID_Downloads = new("374DE290-123F-4565-9164-39C4925E467B");
+    public static readonly Guid FOLDERID_Screenshots = new("B7BEDE81-DF94-4682-A7D8-57A52620B86F");
+    private const uint KF_FLAG_CREATE = 0x00008000;
+
+    [DllImport("shell32.dll")]
+    private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, nint token, out nint path);
+
+    /// <summary>The real path of a known folder (follows OneDrive / moved folders); created when missing.</summary>
+    public static string? KnownFolder(Guid id)
+    {
+        if (SHGetKnownFolderPath(ref id, KF_FLAG_CREATE, 0, out nint path) != 0) return null;
+        try
+        {
+            return Marshal.PtrToStringUni(path);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(path);
+        }
+    }
+
+    // ── Theme broadcast (dark / light mode) ──
+
+    private const int HWND_BROADCAST = 0xFFFF;
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern nint SendMessageTimeout(nint hwnd, int msg, nint wParam, string lParam, uint flags, uint timeout, out nint result);
+
+    /// <summary>Tells every window that a setting changed (e.g. "ImmersiveColorSet" after a theme switch).</summary>
+    public static void BroadcastSettingChange(string area) =>
+        SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, area, SMTO_ABORTIFHUNG, 200, out _);
+
     public static void AddExStyle(nint hwnd, long flags)
     {
         if (IntPtr.Size == 8)

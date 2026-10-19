@@ -42,6 +42,11 @@ internal sealed class VolumeService : IDisposable
     /// <summary>Whether the current output is headphones / a headset.</summary>
     public bool DeviceWorn { get; private set; }
 
+    /// <summary>There is an output whose volume we can follow.</summary>
+    public bool HasDevice => _endpoint is not null;
+
+    public bool IsMuted => _muted;
+
     /// <summary>Nudges the master volume by <paramref name="delta"/> (−1..1). Turning it up also unmutes.</summary>
     public void Adjust(float delta)
     {

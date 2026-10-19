@@ -1,0 +1,152 @@
+<Window x:Class="DynamicIsland.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pengaturan · Dynamic Island"
+        Width="500" Height="660"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize"
+        Topmost="True" WindowStartupLocation="CenterScreen"
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource PrimaryText}">
+
+    <Window.Resources>
+        <!-- A titled group of rows, like iOS settings -->
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TertiaryText}" />
+            <Setter Property="Margin" Value="16,18,0,6" />
+        </Style>
+        <Style x:Key="Group" TargetType="Border">
+            <Setter Property="Background" Value="#FF2C2C2E" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0,3" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource TertiaryText}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="16,6,16,0" />
+        </Style>
+        <Style TargetType="CheckBox" BasedOn="{StaticResource SwitchRow}" />
+    </Window.Resources>
+
+    <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource MenuBorder}" BorderThickness="1" CornerRadius="18">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Title bar: drag to move, × to close -->
+            <Grid Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <StackPanel Orientation="Horizontal" Margin="22,18,0,8">
+                    <Viewbox Width="18" Height="18" VerticalAlignment="Center">
+                        <Grid Width="16" Height="16">
+                            <Path Data="{StaticResource IconGear}" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                        </Grid>
+                    </Viewbox>
+                    <TextBlock Text="Pengaturan" FontSize="17" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Style="{StaticResource IconButton}" Width="34" Height="34" HorizontalAlignment="Right" Margin="0,12,14,0"
+                        VerticalAlignment="Top" Click="Close_Click" AutomationProperties.Name="Tutup pengaturan">
+                    <Viewbox Width="12" Height="12">
+                        <Grid Width="16" Height="16">
+                            <Path Data="{StaticResource IconClose}" Style="{StaticResource StrokeIcon}" StrokeThickness="2" />
+                        </Grid>
+                    </Viewbox>
+                </Button>
+            </Grid>
+
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,14" Padding="18,0,18,0">
+                <StackPanel>
+                    <!-- Each switch's Tag is the AppSettings property it controls -->
+                    <TextBlock Text="TAMPILAN" Style="{StaticResource SectionTitle}" Margin="16,4,0,6" />
+                    <Border Style="{StaticResource Group}">
+                        <StackPanel>
+                            <Grid Margin="14,8,14,8">
+                                <TextBlock Text="Gaya" FontSize="13" VerticalAlignment="Center" />
+                                <Border HorizontalAlignment="Right" Background="#FF1C1C1E" CornerRadius="10" Padding="3">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="StyleIsland" Style="{StaticResource Segment}" GroupName="IslandStyle"
+                                                     Content="Island (melayang)" Checked="Style_Checked" />
+                                        <RadioButton x:Name="StyleNotch" Style="{StaticResource Segment}" GroupName="IslandStyle"
+                                                     Content="Notch (menempel)" Checked="Style_Checked" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <CheckBox Tag="SlimWhenIdle" Content="Garis tipis saat tidak ada aktivitas" />
+                            <CheckBox Tag="ReserveTopSpace" Content="Jangan tutupi jendela (sisakan ruang di atas)" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Jangan tutupi jendela: jendela yang di-maximize mulai di bawah island, seperti menu bar di Mac." />
+
+                    <TextBlock Text="HALAMAN" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Group}">
+                        <StackPanel>
+                            <CheckBox Tag="ShowControlsPage" Content="Kontrol (Wi-Fi, Bluetooth, mikrofon, suara, mode gelap)" />
+                            <CheckBox Tag="ShowSystemPage" Content="Sistem (CPU, memori, internet, disk)" />
+                            <CheckBox Tag="ShowWeather" Content="Cuaca di halaman Hari ini" />
+                            <Grid Margin="14,6,14,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Kota" FontSize="13" VerticalAlignment="Center" Margin="0,0,14,0" />
+                                <Grid Grid.Column="1">
+                                    <Border Background="#FF1C1C1E" CornerRadius="8" />
+                                    <TextBox x:Name="CityBox" AutomationProperties.Name="Kota untuk cuaca" Background="Transparent" BorderThickness="0"
+                                             Foreground="{StaticResource PrimaryText}" CaretBrush="White" FontSize="13" Padding="8,6"
+                                             LostKeyboardFocus="CityBox_LostKeyboardFocus" KeyDown="CityBox_KeyDown" TextChanged="CityBox_TextChanged" />
+                                    <TextBlock x:Name="CityPlaceholder" Text="Kosong = lokasi Windows (mis. Bandung)" FontSize="13"
+                                               Foreground="{StaticResource TertiaryText}" Margin="11,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+                                </Grid>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Style="{StaticResource Hint}" Text="Cuaca dari Open-Meteo (gratis, tanpa akun). Tekan Enter setelah mengetik kota." />
+
+                    <TextBlock Text="MUSIK" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Group}">
+                        <StackPanel>
+                            <CheckBox Tag="ShowLyrics" Content="Lirik lagu (lrclib.net)" />
+                            <CheckBox Tag="CompactLyrics" Content="Lirik di island ringkas" />
+                            <CheckBox Tag="LiveVisualizer" Content="Equalizer mengikuti suara asli" />
+                            <CheckBox Tag="AccentRim" Content="Garis warna cover di pinggir island" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="MUNCUL DI ISLAND" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Group}">
+                        <StackPanel>
+                            <CheckBox Tag="ShowAppNotifications" Content="Notifikasi aplikasi (WhatsApp, Discord, …)" />
+                            <CheckBox Tag="ShowNotificationContent" Content="Tampilkan isi pesan" />
+                            <CheckBox Tag="HideWindowsBanners" Content="Tanpa banner Windows (tidak dobel)" />
+                            <CheckBox Tag="ShowScreenshots" Content="Preview screenshot" />
+                            <CheckBox Tag="ShowDownloads" Content="Unduhan selesai" />
+                            <CheckBox Tag="ShowPrivacy" Content="Mikrofon &amp; kamera (pil panggilan)" />
+                            <CheckBox Tag="ShowTrackChanges" Content="Lagu baru" />
+                            <CheckBox Tag="ShowVolume" Content="Perubahan volume" />
+                            <CheckBox Tag="ShowDeviceChanges" Content="Ganti perangkat audio" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="KALENDER" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Group}">
+                        <Grid Margin="14,8,10,8">
+                            <TextBlock x:Name="CalendarStatus" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,110,0" />
+                            <Button Style="{StaticResource PillButton}" Content="Atur link iCal…" HorizontalAlignment="Right" Padding="12,6"
+                                    Click="Calendar_Click" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="UMUM" Style="{StaticResource SectionTitle}" />
+                    <Border Style="{StaticResource Group}">
+                        <CheckBox x:Name="StartupSwitch" Content="Jalankan saat Windows mulai" Checked="Startup_Changed" Unchecked="Startup_Changed" />
+                    </Border>
+                    <TextBlock Style="{StaticResource Hint}" Margin="16,14,16,0"
+                               Text="Klik kanan island untuk timer, kalender, dan keluar. Pengaturan tersimpan di %AppData%\DynamicIsland." />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>
