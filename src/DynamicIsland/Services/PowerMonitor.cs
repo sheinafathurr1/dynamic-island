@@ -2,7 +2,7 @@ using DynamicIsland.Interop;
 
 namespace DynamicIsland.Services;
 
-internal readonly record struct PowerState(bool HasBattery, bool PluggedIn, int Percent);
+internal readonly record struct PowerState(bool HasBattery, bool PluggedIn, int Percent, bool Saver);
 
 internal enum PowerChange
 {
@@ -10,6 +10,8 @@ internal enum PowerChange
     PluggedIn,
     Unplugged,
     BatteryLow,
+    SaverOn,
+    SaverOff,
     PercentChanged,
 }
 
@@ -31,6 +33,7 @@ internal sealed class PowerMonitor
         if (!now.HasBattery) return PowerChange.None;
         if (now.PluggedIn && !before.PluggedIn) return PowerChange.PluggedIn;
         if (!now.PluggedIn && before.PluggedIn) return PowerChange.Unplugged;
+        if (now.Saver != before.Saver) return now.Saver ? PowerChange.SaverOn : PowerChange.SaverOff;
         if (!now.PluggedIn && LowThresholds.Any(t => before.Percent > t && now.Percent <= t)) return PowerChange.BatteryLow;
         return now.Percent != before.Percent ? PowerChange.PercentChanged : PowerChange.None;
     }
@@ -42,6 +45,7 @@ internal sealed class PowerMonitor
         // BatteryFlag: 128 = no system battery, 255 = unknown.
         bool hasBattery = status.BatteryFlag != 255 && (status.BatteryFlag & 128) == 0;
         int percent = status.BatteryLifePercent > 100 ? 100 : status.BatteryLifePercent;
-        return new PowerState(hasBattery, status.ACLineStatus == 1, percent);
+        // SystemStatusFlag: 1 while battery saver is on.
+        return new PowerState(hasBattery, status.ACLineStatus == 1, percent, status.SystemStatusFlag == 1);
     }
 }

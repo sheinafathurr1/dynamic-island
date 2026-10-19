@@ -33,6 +33,8 @@ internal sealed class AppSettings
     public IslandStyle Style { get; set; } = IslandStyle.Island;
     public bool ShowVolume { get; set; } = true;
     public bool ShowTrackChanges { get; set; } = true;
+    public bool ShowDeviceChanges { get; set; } = true;
+    public bool ShowPrivacy { get; set; } = true;
 
     public static AppSettings Load()
     {

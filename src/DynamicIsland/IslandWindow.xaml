@@ -19,11 +19,27 @@
                 <ContextMenu Opened="Menu_Opened">
                     <MenuItem Header="Dynamic Island" IsEnabled="False" />
                     <Separator />
+                    <MenuItem Header="Timer">
+                        <MenuItem Header="1 menit" Tag="1" Click="TimerPreset_Click" />
+                        <MenuItem Header="5 menit" Tag="5" Click="TimerPreset_Click" />
+                        <MenuItem Header="10 menit" Tag="10" Click="TimerPreset_Click" />
+                        <MenuItem Header="15 menit" Tag="15" Click="TimerPreset_Click" />
+                        <MenuItem Header="25 menit (Pomodoro)" Tag="25" Click="TimerPreset_Click" />
+                        <MenuItem Header="45 menit" Tag="45" Click="TimerPreset_Click" />
+                        <MenuItem Header="60 menit" Tag="60" Click="TimerPreset_Click" />
+                        <Separator />
+                        <MenuItem x:Name="MenuTimerStop" Header="Hentikan timer" Click="TimerStop_Click" />
+                    </MenuItem>
+                    <Separator />
                     <MenuItem x:Name="MenuIsland" Header="Gaya island (melayang)" Click="MenuIsland_Click" />
                     <MenuItem x:Name="MenuNotch" Header="Gaya notch (menempel di atas)" Click="MenuNotch_Click" />
                     <Separator />
-                    <MenuItem x:Name="MenuVolume" Header="Tampilkan perubahan volume" Click="MenuVolume_Click" />
-                    <MenuItem x:Name="MenuTracks" Header="Tampilkan lagu baru" Click="MenuTracks_Click" />
+                    <MenuItem Header="Notifikasi">
+                        <MenuItem x:Name="MenuVolume" Header="Perubahan volume" Click="MenuVolume_Click" />
+                        <MenuItem x:Name="MenuTracks" Header="Lagu baru" Click="MenuTracks_Click" />
+                        <MenuItem x:Name="MenuDevices" Header="Ganti perangkat audio" Click="MenuDevices_Click" />
+                        <MenuItem x:Name="MenuPrivacy" Header="Mikrofon &amp; kamera aktif" Click="MenuPrivacy_Click" />
+                    </MenuItem>
                     <MenuItem x:Name="MenuStartup" Header="Jalankan saat Windows mulai" Click="MenuStartup_Click" />
                     <Separator />
                     <MenuItem Header="Keluar" Click="MenuExit_Click" />
@@ -37,16 +53,35 @@
                     Width="120" Height="32" CornerRadius="16">
                 <Grid x:Name="Stage">
 
-                    <!-- Compact: now playing -->
-                    <Grid x:Name="CompactMediaView" VerticalAlignment="Top" Visibility="Collapsed">
-                        <Border x:Name="CompactArt" Style="{StaticResource Artwork}" Width="22" Height="22"
-                                CornerRadius="6" HorizontalAlignment="Left" Margin="5,0,0,0">
-                            <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="11" />
-                        </Border>
-                        <c:EqualizerBars x:Name="CompactEq" HorizontalAlignment="Right" Margin="0,0,13,0" BarHeight="13" />
+                    <!-- Idle: empty pill, plus the mic / camera dots when they are in use -->
+                    <Grid x:Name="IdleView" VerticalAlignment="Top" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Ellipse x:Name="IdleMicDot" Width="6" Height="6" Margin="3,0" Fill="{StaticResource MicBrush}" Visibility="Collapsed" />
+                            <Ellipse x:Name="IdleCameraDot" Width="6" Height="6" Margin="3,0" Fill="{StaticResource CameraBrush}" Visibility="Collapsed" />
+                        </StackPanel>
                     </Grid>
 
-                    <!-- Transient activities: volume, power, new track -->
+                    <!-- Compact: left slot = artwork or timer ring, right slot = equalizer and/or countdown -->
+                    <Grid x:Name="CompactView" VerticalAlignment="Top" Visibility="Collapsed">
+                        <Grid HorizontalAlignment="Left" VerticalAlignment="Center" Margin="5,0,0,0">
+                            <Border x:Name="CompactArt" Style="{StaticResource Artwork}" Width="22" Height="22" CornerRadius="6">
+                                <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="11" />
+                            </Border>
+                            <c:ProgressRing x:Name="CompactRing" Width="18" Height="18" Margin="4,0,0,0" Thickness="2.6"
+                                            RingBrush="{StaticResource TimerBrush}" Visibility="Collapsed" />
+                        </Grid>
+                        <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Margin="0,0,13,0">
+                            <Ellipse x:Name="CompactMicDot" Width="6" Height="6" Margin="0,0,7,0" VerticalAlignment="Center"
+                                     Fill="{StaticResource MicBrush}" Visibility="Collapsed" />
+                            <Ellipse x:Name="CompactCameraDot" Width="6" Height="6" Margin="0,0,7,0" VerticalAlignment="Center"
+                                     Fill="{StaticResource CameraBrush}" Visibility="Collapsed" />
+                            <c:EqualizerBars x:Name="CompactEq" BarHeight="13" />
+                            <TextBlock x:Name="CompactTimerText" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"
+                                       Foreground="{StaticResource TimerBrush}" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Transient activities -->
                     <Grid x:Name="ActivityView" VerticalAlignment="Top" Visibility="Collapsed">
 
                         <Grid x:Name="VolumePanel" Visibility="Collapsed">
@@ -106,27 +141,64 @@
                             </StackPanel>
                             <c:EqualizerBars x:Name="TrackEq" Grid.Column="2" Margin="12,0,20,0" BarHeight="16" />
                         </Grid>
+
+                        <!-- Generic icon + title + subtitle: audio device, mic / camera, timer finished -->
+                        <Grid x:Name="InfoPanel" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Viewbox x:Name="InfoIcon" Width="20" Height="20" Margin="16,0,12,0" VerticalAlignment="Center">
+                                <Grid Width="16" Height="16">
+                                    <Path x:Name="InfoIconFill" Fill="White" />
+                                    <Path x:Name="InfoIconStroke" Style="{StaticResource StrokeIcon}" StrokeLineJoin="Round" />
+                                </Grid>
+                            </Viewbox>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,18,0">
+                                <TextBlock x:Name="InfoTitle" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="InfoSubtitle" FontSize="12" Foreground="{StaticResource SecondaryText}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,1,0,0" />
+                            </StackPanel>
+                        </Grid>
                     </Grid>
 
-                    <!-- Expanded without media: clock, date and battery -->
+                    <!-- Expanded without media: clock, date, battery and quick timers -->
                     <Grid x:Name="ClockView" VerticalAlignment="Top" Visibility="Collapsed">
-                        <Grid Margin="26,0" VerticalAlignment="Center">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel VerticalAlignment="Center">
-                                <TextBlock x:Name="ClockTime" FontSize="30" FontWeight="SemiBold" />
-                                <TextBlock x:Name="ClockDate" FontSize="12.5" Foreground="{StaticResource SecondaryText}" Margin="1,-2,0,0" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <StackPanel x:Name="ClockBattery" Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <TextBlock x:Name="ClockBatteryText" FontSize="13" FontWeight="SemiBold" Margin="0,0,8,0"
-                                               VerticalAlignment="Center" />
-                                    <c:BatteryIcon x:Name="ClockBatteryIcon" VerticalAlignment="Center" />
+                        <Grid Margin="26,18,26,16">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock x:Name="ClockTime" FontSize="30" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ClockDate" FontSize="12.5" Foreground="{StaticResource SecondaryText}" Margin="1,-2,0,0" />
                                 </StackPanel>
-                                <TextBlock Text="Tidak ada media diputar" FontSize="11.5" Foreground="{StaticResource TertiaryText}"
-                                           HorizontalAlignment="Right" Margin="0,6,0,0" />
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <StackPanel x:Name="ClockBattery" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <TextBlock x:Name="ClockBatteryText" FontSize="13" FontWeight="SemiBold" Margin="0,0,8,0"
+                                                   VerticalAlignment="Center" />
+                                        <c:BatteryIcon x:Name="ClockBatteryIcon" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="Tidak ada media diputar" FontSize="11.5" Foreground="{StaticResource TertiaryText}"
+                                               HorizontalAlignment="Right" Margin="0,6,0,0" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,14,0,0">
+                                <Viewbox Width="15" Height="15" Margin="0,0,10,0" VerticalAlignment="Center">
+                                    <Grid Width="16" Height="16">
+                                        <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
+                                              Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
+                                    </Grid>
+                                </Viewbox>
+                                <Button Style="{StaticResource PillButton}" Content="5 mnt" Tag="5" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                <Button Style="{StaticResource PillButton}" Content="15 mnt" Tag="15" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                <Button Style="{StaticResource PillButton}" Content="25 mnt" Tag="25" Click="TimerPreset_Click" Margin="0,0,6,0" />
+                                <Button Style="{StaticResource PillButton}" Content="45 mnt" Tag="45" Click="TimerPreset_Click" />
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -193,6 +265,79 @@
                                 </Button>
                                 <Button x:Name="NextButton" Style="{StaticResource IconButton}" Margin="16,0,0,0" Click="Next_Click">
                                     <Viewbox Width="20" Height="20">
+                                        <Path Width="16" Height="16" Data="{StaticResource IconNext}" Style="{StaticResource SolidIcon}" />
+                                    </Viewbox>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+
+                    <!-- Expanded timer, with a mini player underneath when music is on -->
+                    <Grid x:Name="TimerView" VerticalAlignment="Top" Visibility="Collapsed">
+                        <Grid Height="64" VerticalAlignment="Top" Margin="22,18,16,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="46" Height="46" VerticalAlignment="Center">
+                                <c:ProgressRing x:Name="TimerRing" Thickness="4" RingBrush="{StaticResource TimerBrush}" />
+                                <Viewbox Width="18" Height="18">
+                                    <Grid Width="16" Height="16">
+                                        <Path Data="{StaticResource IconStopwatch}" Style="{StaticResource StrokeIcon}"
+                                              Stroke="{StaticResource TimerBrush}" StrokeLineJoin="Round" />
+                                    </Grid>
+                                </Viewbox>
+                            </Grid>
+                            <StackPanel Grid.Column="1" Margin="14,0,8,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="TimerLabel" FontSize="12" Foreground="{StaticResource SecondaryText}" />
+                                <TextBlock x:Name="TimerText" FontSize="30" FontWeight="SemiBold" Margin="0,-3,0,0"
+                                           Foreground="{StaticResource TimerBrush}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Style="{StaticResource PillButton}" Content="+1 mnt" Click="TimerAdd_Click" Margin="0,0,6,0" />
+                                <Button Style="{StaticResource IconButton}" Width="38" Height="38" Click="TimerPause_Click">
+                                    <Viewbox Width="15" Height="15">
+                                        <Path x:Name="TimerPauseIcon" Width="16" Height="16" Data="{StaticResource IconPause}" Style="{StaticResource SolidIcon}" />
+                                    </Viewbox>
+                                </Button>
+                                <Button Style="{StaticResource IconButton}" Width="38" Height="38" Click="TimerStop_Click">
+                                    <Viewbox Width="13" Height="13">
+                                        <Grid Width="16" Height="16">
+                                            <Path Data="{StaticResource IconClose}" Style="{StaticResource StrokeIcon}" StrokeThickness="2" />
+                                        </Grid>
+                                    </Viewbox>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid x:Name="MiniPlayer" Height="56" VerticalAlignment="Bottom" Margin="16,0,14,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.ColumnSpan="3" Height="1" VerticalAlignment="Top" Margin="6,0" Background="{StaticResource DividerBrush}" />
+                            <Border x:Name="MiniArt" Style="{StaticResource Artwork}" Width="32" Height="32" CornerRadius="8" Margin="6,0,10,0">
+                                <TextBlock Style="{StaticResource ArtworkGlyph}" FontSize="13" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock x:Name="MiniTitle" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="MiniArtist" FontSize="11.5" Foreground="{StaticResource SecondaryText}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="MiniPreviousButton" Style="{StaticResource IconButton}" Width="32" Height="32" Click="Previous_Click">
+                                    <Viewbox Width="14" Height="14">
+                                        <Path Width="16" Height="16" Data="{StaticResource IconPrevious}" Style="{StaticResource SolidIcon}" />
+                                    </Viewbox>
+                                </Button>
+                                <Button Style="{StaticResource IconButton}" Width="34" Height="34" Click="PlayPause_Click">
+                                    <Viewbox Width="15" Height="15">
+                                        <Path x:Name="MiniPlayPauseIcon" Width="16" Height="16" Data="{StaticResource IconPlay}" Style="{StaticResource SolidIcon}" />
+                                    </Viewbox>
+                                </Button>
+                                <Button x:Name="MiniNextButton" Style="{StaticResource IconButton}" Width="32" Height="32" Click="Next_Click">
+                                    <Viewbox Width="14" Height="14">
                                         <Path Width="16" Height="16" Data="{StaticResource IconNext}" Style="{StaticResource SolidIcon}" />
                                     </Viewbox>
                                 </Button>

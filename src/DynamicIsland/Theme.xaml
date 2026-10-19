@@ -11,6 +11,11 @@
     <SolidColorBrush x:Key="ArtPlaceholder" Color="#FF2A2A2D" />
     <SolidColorBrush x:Key="ChargingBrush" Color="#FF30D158" />
     <SolidColorBrush x:Key="WarningBrush" Color="#FFFF453A" />
+    <SolidColorBrush x:Key="SaverBrush" Color="#FFFFD60A" />
+    <SolidColorBrush x:Key="TimerBrush" Color="#FFFF9F0A" />
+    <SolidColorBrush x:Key="MicBrush" Color="#FFFF9F0A" />
+    <SolidColorBrush x:Key="CameraBrush" Color="#FF30D158" />
+    <SolidColorBrush x:Key="DividerBrush" Color="#1AFFFFFF" />
     <SolidColorBrush x:Key="MenuBackground" Color="#F21C1C1E" />
     <SolidColorBrush x:Key="MenuBorder" Color="#24FFFFFF" />
     <SolidColorBrush x:Key="MenuHighlight" Color="#22FFFFFF" />
@@ -27,6 +32,23 @@
     <StreamGeometry x:Key="IconWaveSmall">M10.8,5.6 A2.6,2.6 0 0 1 10.8,10.4</StreamGeometry>
     <StreamGeometry x:Key="IconWaveLarge">M12.4,3.2 A5.2,5.2 0 0 1 12.4,12.8</StreamGeometry>
     <StreamGeometry x:Key="IconMute">M11,5.5 L15.5,10.5 M15.5,5.5 L11,10.5</StreamGeometry>
+    <StreamGeometry x:Key="IconSpeakerWaves">M10.8,5.6 A2.6,2.6 0 0 1 10.8,10.4 M12.4,3.2 A5.2,5.2 0 0 1 12.4,12.8</StreamGeometry>
+    <StreamGeometry x:Key="IconClose">M4,4 L12,12 M12,4 L4,12</StreamGeometry>
+    <StreamGeometry x:Key="IconStopwatch">M8,3.6 A5.7,5.7 0 0 1 8,15 A5.7,5.7 0 0 1 8,3.6 M8,6.4 L8,9.3 L10.1,10.8 M6.4,1.3 L9.6,1.3 M8,1.3 L8,3.6</StreamGeometry>
+    <!-- Microphone: filled capsule + stroked stand -->
+    <StreamGeometry x:Key="IconMicBody">M8,1 A2.6,2.6 0 0 1 10.6,3.6 L10.6,7.6 A2.6,2.6 0 0 1 5.4,7.6 L5.4,3.6 A2.6,2.6 0 0 1 8,1 Z</StreamGeometry>
+    <StreamGeometry x:Key="IconMicStand">M3.2,7.4 A4.8,4.8 0 0 0 12.8,7.4 M8,12.2 L8,14.8 M5.6,14.8 L10.4,14.8</StreamGeometry>
+    <!-- Video camera -->
+    <GeometryGroup x:Key="IconCamera">
+        <RectangleGeometry Rect="0.8,4,10,8" RadiusX="2" RadiusY="2" />
+        <PathGeometry Figures="M11.6,7.2 L15.2,5 L15.2,11 L11.6,8.8 Z" />
+    </GeometryGroup>
+    <!-- Headphones: filled ear cups + stroked band -->
+    <GeometryGroup x:Key="IconHeadphoneCups">
+        <RectangleGeometry Rect="1.2,9,3.4,5.6" RadiusX="1.4" RadiusY="1.4" />
+        <RectangleGeometry Rect="11.4,9,3.4,5.6" RadiusX="1.4" RadiusY="1.4" />
+    </GeometryGroup>
+    <StreamGeometry x:Key="IconHeadphoneBand">M2.4,10.5 L2.4,8.2 A5.6,5.6 0 0 1 13.6,8.2 L13.6,10.5</StreamGeometry>
 
     <!-- Concave corner that melts the notch into the top edge of the screen.
          One extra pixel column overlaps the island so no seam shows between the two shapes. -->
@@ -59,6 +81,38 @@
         <Setter Property="Stroke" Value="White" />
         <Setter Property="StrokeThickness" Value="1.4" />
         <Setter Property="StrokeLineJoin" Value="Round" />
+    </Style>
+
+    <!-- Rounded text button: timer chips, "+1 mnt" -->
+    <Style x:Key="PillButton" TargetType="Button">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="12,5" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chrome" Background="#1FFFFFFF" CornerRadius="999" Padding="{TemplateBinding Padding}"
+                            RenderTransformOrigin="0.5,0.5">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="#33FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Chrome" Property="RenderTransform">
+                                <Setter.Value>
+                                    <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="IconButton" TargetType="Button">
@@ -117,20 +171,37 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="MenuItem">
-                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="7" Padding="8,7,16,7">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="24" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Path x:Name="Check" Data="M1,5 L4.5,8.5 L11,1.5" Stroke="{TemplateBinding Foreground}"
-                                  StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                  StrokeLineJoin="Round" VerticalAlignment="Center" Visibility="Hidden" />
-                            <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True"
-                                              VerticalAlignment="Center" />
-                        </Grid>
-                    </Border>
+                    <Grid>
+                        <Border x:Name="Chrome" Background="Transparent" CornerRadius="7" Padding="8,7,16,7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Path x:Name="Check" Data="M1,5 L4.5,8.5 L11,1.5" Stroke="{TemplateBinding Foreground}"
+                                      StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round" VerticalAlignment="Center" Visibility="Hidden" />
+                                <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True"
+                                                  VerticalAlignment="Center" />
+                                <Path x:Name="Arrow" Grid.Column="2" Data="M0,0 L4,4 L0,8" Stroke="{StaticResource SecondaryText}"
+                                      StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round" VerticalAlignment="Center" Margin="16,0,-6,0" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                        <Popup x:Name="Submenu" Placement="Right" HorizontalOffset="8" VerticalOffset="-6"
+                               IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                               AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                            <Border Background="{StaticResource MenuBackground}" BorderBrush="{StaticResource MenuBorder}"
+                                    BorderThickness="1" CornerRadius="12" Padding="5" MinWidth="200">
+                                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                            </Border>
+                        </Popup>
+                    </Grid>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="Role" Value="SubmenuHeader">
+                            <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+                        </Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter TargetName="Check" Property="Visibility" Value="Visible" />
                         </Trigger>

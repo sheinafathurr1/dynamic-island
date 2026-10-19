@@ -26,3 +26,15 @@ jobs:
         with:
           name: DynamicIsland-win-x64
           path: publish/DynamicIsland.exe
+
+      # Launches the real app on the runner's desktop, clicks through it and takes screenshots.
+      - name: UI smoke test
+        shell: powershell
+        run: ./tools/ui-smoke-test.ps1 -Exe publish/DynamicIsland.exe -OutDir screenshots -EmitBase64
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore

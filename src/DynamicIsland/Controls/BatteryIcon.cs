@@ -10,6 +10,7 @@ public sealed class BatteryIcon : FrameworkElement
     private static readonly Brush NormalBrush = Brushes.White;
     private static readonly Brush ChargingBrush = Frozen(new SolidColorBrush(Color.FromRgb(0x30, 0xD1, 0x58)));
     private static readonly Brush LowBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xFF, 0x45, 0x3A)));
+    private static readonly Brush SaverBrush = Frozen(new SolidColorBrush(Color.FromRgb(0xFF, 0xD6, 0x0A)));
     private static readonly Pen OutlinePen = Frozen(new Pen(OutlineBrush, 1));
     private static readonly Pen BoltPen = Frozen(new Pen(Brushes.Black, 0.9) { LineJoin = PenLineJoin.Round });
     private static readonly Geometry Bolt = Frozen(Geometry.Parse("M13.2,1.6 L8.6,7.2 L11.6,7.2 L10.6,11.4 L15.2,5.8 L12.2,5.8 Z"));
@@ -20,6 +21,10 @@ public sealed class BatteryIcon : FrameworkElement
 
     public static readonly DependencyProperty IsChargingProperty = DependencyProperty.Register(
         nameof(IsCharging), typeof(bool), typeof(BatteryIcon),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty IsSaverProperty = DependencyProperty.Register(
+        nameof(IsSaver), typeof(bool), typeof(BatteryIcon),
         new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
     /// <summary>Charge between 0 and 1.</summary>
@@ -35,12 +40,19 @@ public sealed class BatteryIcon : FrameworkElement
         set => SetValue(IsChargingProperty, value);
     }
 
+    /// <summary>Battery saver on: yellow, like iOS Low Power Mode.</summary>
+    public bool IsSaver
+    {
+        get => (bool)GetValue(IsSaverProperty);
+        set => SetValue(IsSaverProperty, value);
+    }
+
     protected override Size MeasureOverride(Size availableSize) => new(27, 13);
 
     protected override void OnRender(DrawingContext dc)
     {
         double level = Math.Clamp(Level, 0, 1);
-        var fill = IsCharging ? ChargingBrush : level <= 0.2 ? LowBrush : NormalBrush;
+        var fill = IsCharging ? ChargingBrush : IsSaver ? SaverBrush : level <= 0.2 ? LowBrush : NormalBrush;
 
         dc.DrawRoundedRectangle(null, OutlinePen, new Rect(0.5, 0.5, 23, 12), 3.5, 3.5);
         dc.DrawRoundedRectangle(OutlineBrush, null, new Rect(24.5, 4.5, 1.8, 4), 0.9, 0.9);

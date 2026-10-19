@@ -2,7 +2,8 @@ using System.Runtime.InteropServices;
 
 namespace DynamicIsland.Interop;
 
-// Minimal Core Audio (MMDevice API) definitions — just enough to watch the master volume.
+// Minimal Core Audio (MMDevice API) definitions — just enough to watch the master volume and
+// the default output device.
 // Vtable order matters: methods must be declared exactly in the native order.
 
 internal static class CoreAudio
@@ -10,6 +11,20 @@ internal static class CoreAudio
     public const int CLSCTX_ALL = 0x17;
     public const int ERender = 0;
     public const int EMultimedia = 1;
+    public const int STGM_READ = 0;
+    public const ushort VT_UI4 = 19;
+    public const ushort VT_LPWSTR = 31;
+
+    // EndpointFormFactor values that mean "something on your head".
+    public const uint FormFactorHeadphones = 3;
+    public const uint FormFactorHeadset = 5;
+    public const uint FormFactorHandset = 6;
+
+    public static readonly PropertyKey PKEY_Device_FriendlyName = new(new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), 14);
+    public static readonly PropertyKey PKEY_AudioEndpoint_FormFactor = new(new Guid("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), 0);
+
+    [DllImport("ole32.dll")]
+    public static extern int PropVariantClear(ref PropVariant value);
 }
 
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
@@ -32,6 +47,20 @@ internal interface IMMDevice
 {
     [PreserveSig]
     int Activate(ref Guid iid, int clsCtx, nint activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object? instance);
+
+    [PreserveSig] int OpenPropertyStore(int storageAccess, out IPropertyStore? properties);
+    [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string? id);
+    [PreserveSig] int GetState(out int state);
+}
+
+[ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IPropertyStore
+{
+    [PreserveSig] int GetCount(out uint count);
+    [PreserveSig] int GetAt(uint index, out PropertyKey key);
+    [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant value);
+    [PreserveSig] int SetValue(ref PropertyKey key, ref PropVariant value);
+    [PreserveSig] int Commit();
 }
 
 [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -69,8 +98,20 @@ internal interface IMMNotificationClient
 }
 
 [StructLayout(LayoutKind.Sequential)]
-internal struct PropertyKey
+internal struct PropertyKey(Guid formatId, int propertyId)
 {
-    public Guid FormatId;
-    public int PropertyId;
+    public Guid FormatId = formatId;
+    public int PropertyId = propertyId;
+}
+
+/// <summary>PROPVARIANT: 16 bytes on x86, 24 on x64. Only the scalar / pointer member is read.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct PropVariant
+{
+    public ushort VarType;
+    public ushort Reserved1;
+    public ushort Reserved2;
+    public ushort Reserved3;
+    public nint Value;
+    public nint Value2;
 }

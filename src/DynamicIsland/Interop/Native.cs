@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace DynamicIsland.Interop;
 
@@ -29,6 +30,11 @@ internal static class Native
 
     public static readonly Guid GUID_ACDC_POWER_SOURCE = new("5D3E9A59-E9D5-4B00-A6BD-FF34FF516548");
     public static readonly Guid GUID_BATTERY_PERCENTAGE_REMAINING = new("A7AD8041-B45A-4CAE-87A3-EECBB468A9E1");
+    public static readonly Guid GUID_POWER_SAVING_STATUS = new("E00958C0-C213-4ACE-AC77-FECCED2EEEA5");
+
+    public const uint REG_NOTIFY_CHANGE_NAME = 0x00000001;
+    public const uint REG_NOTIFY_CHANGE_LAST_SET = 0x00000004;
+    public const uint REG_NOTIFY_THREAD_AGNOSTIC = 0x10000000; // registration survives the calling thread
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -131,6 +137,14 @@ internal static class Native
     [DllImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
+
+    [DllImport("advapi32.dll")]
+    public static extern int RegNotifyChangeKeyValue(
+        SafeRegistryHandle hKey,
+        [MarshalAs(UnmanagedType.Bool)] bool watchSubtree,
+        uint notifyFilter,
+        SafeWaitHandle hEvent,
+        [MarshalAs(UnmanagedType.Bool)] bool asynchronous);
 
     public static void AddExStyle(nint hwnd, long flags)
     {

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Media;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -18,10 +19,11 @@ public partial class IslandWindow : Window
     private enum View
     {
         Idle,
-        CompactMedia,
+        Compact,
         Activity,
         ExpandedMedia,
         ExpandedClock,
+        ExpandedTimer,
     }
 
     private enum ActivityKind
@@ -29,6 +31,9 @@ public partial class IslandWindow : Window
         Volume,
         Power,
         Track,
+        Device,
+        Privacy,
+        TimerDone,
     }
 
     /// <summary>How long the compact "now playing" stays after pausing before the island goes idle.</summary>
@@ -38,9 +43,11 @@ public partial class IslandWindow : Window
 
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly PowerMonitor _power = new();
+    private readonly TimerService _timer = new();
     private readonly MediaService _media;
     private readonly IslandAnimator _animator;
     private VolumeService? _volume;
+    private PrivacyMonitor? _privacy;
     private ShellHooks? _shell;
     private nint _hwnd;
 
@@ -59,6 +66,8 @@ public partial class IslandWindow : Window
     private bool _wasPlaying;
     private bool _batteryLow;
     private DateTime _pausedAt = DateTime.MinValue;
+    private string? _microphoneApp;
+    private string? _cameraApp;
 
     private BitmapSource? _artSource;
     private Brush? _artBrush;
@@ -83,12 +92,7 @@ public partial class IslandWindow : Window
             _leaveTimer.Stop();
             SetExpanded(false);
         };
-        _activityTimer.Tick += (_, _) =>
-        {
-            _activityTimer.Stop();
-            _activity = null;
-            ApplyState();
-        };
+        _activityTimer.Tick += (_, _) => EndActivity();
         _graceTimer.Tick += (_, _) =>
         {
             _graceTimer.Stop();
@@ -98,6 +102,8 @@ public partial class IslandWindow : Window
 
         _media.Changed += OnMediaChanged;
         _media.TrackChanged += OnTrackChanged;
+        _timer.Changed += OnTimerChanged;
+        _timer.Finished += OnTimerFinished;
 
         Loaded += OnLoaded;
     }
@@ -130,6 +136,7 @@ public partial class IslandWindow : Window
     {
         _media.Dispose();
         _volume?.Dispose();
+        _privacy?.Dispose();
         _shell?.Dispose();
         base.OnClosed(e);
     }
@@ -139,14 +146,30 @@ public partial class IslandWindow : Window
         Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(350)));
         ApplyState();
 
+        // Each source is optional: if one is unavailable on this PC the rest keeps working.
         try
         {
             _volume = new VolumeService(Dispatcher);
             _volume.VolumeChanged += OnVolumeChanged;
+            _volume.DeviceChanged += OnAudioDeviceChanged;
         }
         catch (Exception ex)
         {
-            Log.Error(ex); // no audio stack (e.g. some VMs): the island still works without it
+            Log.Error(ex);
+        }
+
+        try
+        {
+            _privacy = new PrivacyMonitor(Dispatcher);
+            _privacy.Changed += OnPrivacyChanged;
+            _microphoneApp = _privacy.MicrophoneApp;
+            _cameraApp = _privacy.CameraApp;
+            UpdatePrivacyDots();
+            ApplyState();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
         }
 
         await _media.StartAsync();
@@ -194,6 +217,8 @@ public partial class IslandWindow : Window
     private bool ShowsCompactMedia =>
         _media.HasSession && (_media.IsPlaying || DateTime.UtcNow - _pausedAt < PauseGrace);
 
+    private bool ShowsPrivacyDots => _settings.ShowPrivacy && (_microphoneApp is not null || _cameraApp is not null);
+
     private void SetExpanded(bool expanded)
     {
         if (_expanded == expanded) return;
@@ -204,10 +229,14 @@ public partial class IslandWindow : Window
     /// <summary>Single place that decides what the island shows; call it after any state change.</summary>
     private void ApplyState()
     {
-        View view = _expanded ? (_media.HasSession ? View.ExpandedMedia : View.ExpandedClock)
+        View view =
+            _activity == ActivityKind.TimerDone ? View.Activity // an alarm beats everything, even hover
+            : _expanded ? (_timer.IsActive ? View.ExpandedTimer : _media.HasSession ? View.ExpandedMedia : View.ExpandedClock)
             : _activity is not null ? View.Activity
-            : ShowsCompactMedia ? View.CompactMedia
+            : _timer.IsActive || ShowsCompactMedia ? View.Compact
             : View.Idle;
+
+        if (view == View.Compact) UpdateCompactSlots();
 
         var (width, height, radius) = SizeOf(view);
         _animator.AnimateTo(width, height, radius);
@@ -217,33 +246,40 @@ public partial class IslandWindow : Window
     private (double Width, double Height, double Radius) SizeOf(View view)
     {
         bool notch = _settings.Style == IslandStyle.Notch;
-        return view switch
+        switch (view)
         {
-            View.CompactMedia => notch ? (260, 32, 12) : (250, 32, 16),
-            View.Activity => (_activitySize.Width, _activitySize.Height, notch ? 14 : _activitySize.Height / 2),
-            View.ExpandedClock => (340, 88, notch ? 24 : 32),
-            View.ExpandedMedia => (400, _media.HasTimeline ? 176 : 150, notch ? 28 : 40),
-            _ => notch ? (180, 30, 10) : (120, 32, 16),
-        };
+            case View.Compact:
+                double width = ShowsCompactMedia ? 250 : 200;
+                return notch ? (width + 10, 32, 12) : (width, 32, 16);
+            case View.Activity:
+                return (_activitySize.Width, _activitySize.Height, notch ? 14 : _activitySize.Height / 2);
+            case View.ExpandedClock:
+                return (360, 132, notch ? 26 : 36);
+            case View.ExpandedMedia:
+                return (400, _media.HasTimeline ? 176 : 150, notch ? 28 : 40);
+            case View.ExpandedTimer:
+                return _media.HasSession ? (380, 156, notch ? 28 : 40) : (380, 100, notch ? 26 : 36);
+            default:
+                if (notch) return (180, 30, 10);
+                return ShowsPrivacyDots ? (140, 32, 16) : (120, 32, 16);
+        }
     }
 
     private void SwitchTo(View view, double width, double height)
     {
-        FrameworkElement? element = view switch
+        FrameworkElement element = view switch
         {
-            View.CompactMedia => CompactMediaView,
+            View.Compact => CompactView,
             View.Activity => ActivityView,
             View.ExpandedMedia => MediaView,
             View.ExpandedClock => ClockView,
-            _ => null,
+            View.ExpandedTimer => TimerView,
+            _ => IdleView,
         };
 
         // Content is laid out at its final size up front, so nothing reflows while the shape morphs.
-        if (element is not null)
-        {
-            element.Width = width;
-            element.Height = height;
-        }
+        element.Width = width;
+        element.Height = height;
 
         var previous = _viewElement;
         _view = view;
@@ -252,17 +288,22 @@ public partial class IslandWindow : Window
         if (!ReferenceEquals(previous, element))
         {
             if (previous is not null) FadeOut(previous);
-            if (element is not null) FadeIn(element);
+            FadeIn(element);
         }
 
         RefreshLiveContent();
 
-        // The only periodic work in the app, and only while an expanded view is on screen.
-        bool live = view == View.ExpandedClock || (view == View.ExpandedMedia && _media.HasTimeline && _media.IsPlaying);
-        if (live)
+        // The only periodic work in the app, and only while something on screen is counting.
+        bool countdown = _timer.IsActive && !_timer.IsPaused && view is View.Compact or View.ExpandedTimer;
+        TimeSpan? interval =
+            countdown ? TimeSpan.FromMilliseconds(250)
+            : view == View.ExpandedMedia && _media.HasTimeline && _media.IsPlaying ? TimeSpan.FromMilliseconds(500)
+            : view == View.ExpandedClock ? TimeSpan.FromSeconds(1)
+            : null;
+
+        if (interval is { } value)
         {
-            var interval = TimeSpan.FromMilliseconds(view == View.ExpandedClock ? 1000 : 500);
-            if (_liveTimer.Interval != interval) _liveTimer.Interval = interval;
+            if (_liveTimer.Interval != value) _liveTimer.Interval = value;
             _liveTimer.Start();
         }
         else
@@ -273,8 +314,20 @@ public partial class IslandWindow : Window
 
     private void RefreshLiveContent()
     {
+        if (_timer.IsActive) UpdateTimerContent();
         if (_view == View.ExpandedClock) UpdateClock();
         else if (_view == View.ExpandedMedia) UpdateTimeline();
+    }
+
+    /// <summary>Compact island: left = artwork or timer ring, right = equalizer and/or countdown.</summary>
+    private void UpdateCompactSlots()
+    {
+        bool media = ShowsCompactMedia;
+        bool timer = _timer.IsActive;
+        CompactArt.Visibility = media ? Visibility.Visible : Visibility.Collapsed;
+        CompactRing.Visibility = !media && timer ? Visibility.Visible : Visibility.Collapsed;
+        CompactEq.Visibility = media && !timer ? Visibility.Visible : Visibility.Collapsed;
+        CompactTimerText.Visibility = timer ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void FadeIn(FrameworkElement element)
@@ -319,8 +372,11 @@ public partial class IslandWindow : Window
 
     private void ShowActivity(ActivityKind kind, FrameworkElement panel, double width, double height, TimeSpan duration)
     {
+        // A finished timer stays on screen until it is dismissed or times out; others wait their turn.
+        if (_activity == ActivityKind.TimerDone && kind != ActivityKind.TimerDone) return;
+
         bool switching = _activity != kind;
-        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel })
+        foreach (var candidate in new FrameworkElement[] { VolumePanel, PowerPanel, TrackPanel, InfoPanel })
             candidate.Visibility = ReferenceEquals(candidate, panel) ? Visibility.Visible : Visibility.Collapsed;
         if (switching && _view == View.Activity) FadeIn(panel);
 
@@ -330,6 +386,33 @@ public partial class IslandWindow : Window
         _activityTimer.Interval = duration;
         _activityTimer.Start();
         ApplyState();
+    }
+
+    private void EndActivity()
+    {
+        _activityTimer.Stop();
+        _activity = null;
+        InfoIcon.BeginAnimation(OpacityProperty, null);
+        ApplyState();
+    }
+
+    /// <summary>Icon + title (+ subtitle) notification. Icons come from Theme.xaml as fill / stroke parts.</summary>
+    private void ShowInfo(ActivityKind kind, string? fillIcon, string? strokeIcon, Brush accent,
+        string title, string? subtitle, double width, TimeSpan duration)
+    {
+        if (_activity == ActivityKind.TimerDone && kind != ActivityKind.TimerDone) return;
+
+        InfoIconFill.Data = fillIcon is null ? null : (Geometry)FindResource(fillIcon);
+        InfoIconFill.Fill = accent;
+        InfoIconStroke.Data = strokeIcon is null ? null : (Geometry)FindResource(strokeIcon);
+        InfoIconStroke.Stroke = accent;
+        InfoIcon.BeginAnimation(OpacityProperty, null);
+
+        InfoTitle.Text = title;
+        InfoSubtitle.Text = subtitle ?? "";
+        InfoSubtitle.Visibility = string.IsNullOrEmpty(subtitle) ? Visibility.Collapsed : Visibility.Visible;
+
+        ShowActivity(kind, InfoPanel, width, string.IsNullOrEmpty(subtitle) ? 36 : 52, duration);
     }
 
     // ───────────────────────────── media ─────────────────────────────
@@ -369,6 +452,7 @@ public partial class IslandWindow : Window
             SetArtwork(CompactArt);
             SetArtwork(MediaArt);
             SetArtwork(TrackArt);
+            SetArtwork(MiniArt);
         }
 
         if (_accent != _media.Accent)
@@ -379,14 +463,16 @@ public partial class IslandWindow : Window
         }
         CompactEq.IsPlaying = MediaEq.IsPlaying = TrackEq.IsPlaying = _media.IsPlaying;
 
-        MediaTitle.Text = _media.Title;
-        MediaArtist.Text = _media.Artist;
+        MediaTitle.Text = MiniTitle.Text = _media.Title;
+        MediaArtist.Text = MiniArtist.Text = _media.Artist;
         if (_activity == ActivityKind.Track) FillTrackPanel();
 
-        PlayPauseIcon.Data = (Geometry)FindResource(_media.IsPlaying ? "IconPause" : "IconPlay");
-        PreviousButton.IsEnabled = _media.CanGoPrevious;
-        NextButton.IsEnabled = _media.CanGoNext;
+        var playPause = (Geometry)FindResource(_media.IsPlaying ? "IconPause" : "IconPlay");
+        PlayPauseIcon.Data = MiniPlayPauseIcon.Data = playPause;
+        PreviousButton.IsEnabled = MiniPreviousButton.IsEnabled = _media.CanGoPrevious;
+        NextButton.IsEnabled = MiniNextButton.IsEnabled = _media.CanGoNext;
         MediaTimeline.Visibility = _media.HasTimeline ? Visibility.Visible : Visibility.Collapsed;
+        MiniPlayer.Visibility = _media.HasSession ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void FillTrackPanel()
@@ -427,7 +513,56 @@ public partial class IslandWindow : Window
         _media.Seek(e.GetPosition(MediaTrack).X / MediaTrack.ActualWidth);
     }
 
-    // ───────────────────────────── volume & power ─────────────────────────────
+    // ───────────────────────────── timer ─────────────────────────────
+
+    private void OnTimerChanged()
+    {
+        UpdateTimerContent();
+        ApplyState();
+    }
+
+    private void OnTimerFinished(TimeSpan total)
+    {
+        SystemSounds.Exclamation.Play();
+        ShowInfo(ActivityKind.TimerDone, null, "IconStopwatch", (Brush)FindResource("TimerBrush"),
+            "Waktu habis!", $"Timer {FormatDuration(total)} selesai · klik untuk menutup", 330, TimeSpan.FromSeconds(12));
+
+        // Gentle pulse so it catches the eye; finite, so it stops costing anything afterwards.
+        InfoIcon.BeginAnimation(OpacityProperty, new DoubleAnimation(1, 0.25, TimeSpan.FromMilliseconds(450))
+        {
+            AutoReverse = true,
+            RepeatBehavior = new RepeatBehavior(6),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+        });
+    }
+
+    private void UpdateTimerContent()
+    {
+        int seconds = (int)Math.Ceiling(_timer.Remaining.TotalSeconds);
+        double total = _timer.Total.TotalSeconds;
+        string text = FormatCountdown(seconds);
+
+        // Whole seconds only, so the ring and text change (and re-render) at most once a second.
+        CompactTimerText.Text = TimerText.Text = text;
+        CompactRing.Progress = TimerRing.Progress = total > 0 ? Math.Clamp(seconds / total, 0, 1) : 0;
+        TimerLabel.Text = _timer.IsPaused ? "Dijeda" : $"Timer {FormatDuration(_timer.Total)}";
+        TimerText.Opacity = CompactTimerText.Opacity = _timer.IsPaused ? 0.55 : 1;
+        TimerPauseIcon.Data = (Geometry)FindResource(_timer.IsPaused ? "IconPlay" : "IconPause");
+    }
+
+    private void TimerPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tag } && int.TryParse(tag, out int minutes))
+            _timer.Start(TimeSpan.FromMinutes(minutes));
+    }
+
+    private void TimerPause_Click(object sender, RoutedEventArgs e) => _timer.TogglePause();
+
+    private void TimerAdd_Click(object sender, RoutedEventArgs e) => _timer.Add(TimeSpan.FromMinutes(1));
+
+    private void TimerStop_Click(object sender, RoutedEventArgs e) => _timer.Stop();
+
+    // ───────────────────────────── volume, devices & privacy ─────────────────────────────
 
     private void OnVolumeChanged(float level, bool muted)
     {
@@ -444,8 +579,55 @@ public partial class IslandWindow : Window
         ShowActivity(ActivityKind.Volume, VolumePanel, 300, 36, TimeSpan.FromSeconds(1.6));
     }
 
+    private void OnAudioDeviceChanged(string name, bool worn)
+    {
+        if (!_settings.ShowDeviceChanges || _hiddenForFullscreen) return;
+
+        ShowInfo(ActivityKind.Device,
+            worn ? "IconHeadphoneCups" : "IconSpeaker",
+            worn ? "IconHeadphoneBand" : "IconSpeakerWaves",
+            (Brush)FindResource("PrimaryText"),
+            name, "Output audio", 330, TimeSpan.FromSeconds(2.6));
+    }
+
+    private void OnPrivacyChanged()
+    {
+        if (_privacy is null) return;
+
+        bool cameraStarted = _privacy.CameraApp is not null && _cameraApp is null;
+        bool microphoneStarted = _privacy.MicrophoneApp is not null && _microphoneApp is null;
+        _microphoneApp = _privacy.MicrophoneApp;
+        _cameraApp = _privacy.CameraApp;
+        UpdatePrivacyDots();
+
+        if (_settings.ShowPrivacy && !_hiddenForFullscreen && (cameraStarted || microphoneStarted))
+        {
+            if (cameraStarted)
+                ShowInfo(ActivityKind.Privacy, "IconCamera", null, (Brush)FindResource("CameraBrush"),
+                    "Kamera aktif", _cameraApp, 300, TimeSpan.FromSeconds(2.6));
+            else
+                ShowInfo(ActivityKind.Privacy, "IconMicBody", "IconMicStand", (Brush)FindResource("MicBrush"),
+                    "Mikrofon aktif", _microphoneApp, 300, TimeSpan.FromSeconds(2.6));
+            return;
+        }
+
+        ApplyState(); // the idle pill widens / narrows for the dots
+    }
+
+    private void UpdatePrivacyDots()
+    {
+        var microphone = _settings.ShowPrivacy && _microphoneApp is not null ? Visibility.Visible : Visibility.Collapsed;
+        var camera = _settings.ShowPrivacy && _cameraApp is not null ? Visibility.Visible : Visibility.Collapsed;
+        IdleMicDot.Visibility = CompactMicDot.Visibility = microphone;
+        IdleCameraDot.Visibility = CompactCameraDot.Visibility = camera;
+    }
+
+    // ───────────────────────────── power ─────────────────────────────
+
     private void OnPowerChanged()
     {
+        _timer.Resync(); // also covers waking up from sleep
+
         var change = _power.Update();
         var state = _power.State;
 
@@ -458,6 +640,8 @@ public partial class IslandWindow : Window
         {
             PowerChange.PluggedIn => state.Percent >= 100 ? "Terisi penuh" : "Mengisi daya",
             PowerChange.Unplugged => "Menggunakan baterai",
+            PowerChange.SaverOn => "Penghemat baterai aktif",
+            PowerChange.SaverOff => "Penghemat baterai mati",
             _ => "Baterai lemah",
         };
         FillPowerPanel(state);
@@ -467,14 +651,17 @@ public partial class IslandWindow : Window
     private void FillPowerPanel(PowerState state)
     {
         bool low = _batteryLow && !state.PluggedIn;
+        var primary = (Brush)FindResource("PrimaryText");
         var accent = state.PluggedIn ? (Brush)FindResource("ChargingBrush")
+            : state.Saver ? (Brush)FindResource("SaverBrush")
             : low ? (Brush)FindResource("WarningBrush")
-            : (Brush)FindResource("PrimaryText");
-        PowerTitle.Foreground = low ? accent : (Brush)FindResource("PrimaryText");
+            : primary;
+        PowerTitle.Foreground = low ? accent : primary;
         PowerPercent.Text = $"{state.Percent}%";
         PowerPercent.Foreground = accent;
         PowerBattery.Level = state.Percent / 100.0;
         PowerBattery.IsCharging = state.PluggedIn;
+        PowerBattery.IsSaver = state.Saver;
     }
 
     private void UpdateClock()
@@ -489,6 +676,7 @@ public partial class IslandWindow : Window
         ClockBatteryText.Text = $"{power.Percent}%";
         ClockBatteryIcon.Level = power.Percent / 100.0;
         ClockBatteryIcon.IsCharging = power.PluggedIn;
+        ClockBatteryIcon.IsSaver = power.Saver;
     }
 
     // ───────────────────────────── mouse ─────────────────────────────
@@ -507,8 +695,16 @@ public partial class IslandWindow : Window
 
     private void Shape_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        // Click expands right away (handy for touch screens and pens).
         _hoverTimer.Stop();
+
+        // Clicking a finished timer dismisses the alarm.
+        if (_activity == ActivityKind.TimerDone)
+        {
+            EndActivity();
+            return;
+        }
+
+        // Otherwise a click expands right away (handy for touch screens and pens).
         SetExpanded(true);
     }
 
@@ -516,10 +712,13 @@ public partial class IslandWindow : Window
 
     private void Menu_Opened(object sender, RoutedEventArgs e)
     {
+        MenuTimerStop.IsEnabled = _timer.IsActive;
         MenuIsland.IsChecked = _settings.Style == IslandStyle.Island;
         MenuNotch.IsChecked = _settings.Style == IslandStyle.Notch;
         MenuVolume.IsChecked = _settings.ShowVolume;
         MenuTracks.IsChecked = _settings.ShowTrackChanges;
+        MenuDevices.IsChecked = _settings.ShowDeviceChanges;
+        MenuPrivacy.IsChecked = _settings.ShowPrivacy;
         MenuStartup.IsChecked = AppSettings.StartWithWindows;
     }
 
@@ -537,6 +736,20 @@ public partial class IslandWindow : Window
     {
         _settings.ShowTrackChanges = !_settings.ShowTrackChanges;
         _settings.Save();
+    }
+
+    private void MenuDevices_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowDeviceChanges = !_settings.ShowDeviceChanges;
+        _settings.Save();
+    }
+
+    private void MenuPrivacy_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.ShowPrivacy = !_settings.ShowPrivacy;
+        _settings.Save();
+        UpdatePrivacyDots();
+        ApplyState();
     }
 
     private void MenuStartup_Click(object sender, RoutedEventArgs e)
@@ -586,6 +799,20 @@ public partial class IslandWindow : Window
     {
         if (time < TimeSpan.Zero) time = TimeSpan.Zero;
         return time.TotalHours >= 1 ? time.ToString(@"h\:mm\:ss") : time.ToString(@"m\:ss");
+    }
+
+    /// <summary>1499 → "24:59", 3600 → "1:00:00".</summary>
+    private static string FormatCountdown(int seconds) =>
+        seconds >= 3600
+            ? $"{seconds / 3600}:{seconds / 60 % 60:00}:{seconds % 60:00}"
+            : $"{seconds / 60}:{seconds % 60:00}";
+
+    /// <summary>25 min → "25 menit", 75 min → "1 jam 15 menit".</summary>
+    private static string FormatDuration(TimeSpan duration)
+    {
+        int minutes = (int)Math.Round(duration.TotalMinutes);
+        if (minutes < 60) return $"{minutes} menit";
+        return minutes % 60 == 0 ? $"{minutes / 60} jam" : $"{minutes / 60} jam {minutes % 60} menit";
     }
 
     private static T Frozen<T>(T freezable) where T : Freezable

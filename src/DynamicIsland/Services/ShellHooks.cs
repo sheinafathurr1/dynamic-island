@@ -7,7 +7,7 @@ namespace DynamicIsland.Services;
 /// Window-message based system notifications, all push (no timers):
 /// <list type="bullet">
 /// <item>full-screen apps, via an AppBar registration that reserves no screen space,</item>
-/// <item>AC / battery changes, via WM_POWERBROADCAST,</item>
+/// <item>AC / battery / battery-saver changes, via WM_POWERBROADCAST,</item>
 /// <item>resolution, monitor and taskbar changes, via WM_DISPLAYCHANGE / WM_SETTINGCHANGE.</item>
 /// </list>
 /// </summary>
@@ -23,7 +23,7 @@ internal sealed class ShellHooks : IDisposable
         _hwnd = hwnd;
         RegisterAppBar();
 
-        foreach (var setting in new[] { Native.GUID_ACDC_POWER_SOURCE, Native.GUID_BATTERY_PERCENTAGE_REMAINING })
+        foreach (var setting in new[] { Native.GUID_ACDC_POWER_SOURCE, Native.GUID_BATTERY_PERCENTAGE_REMAINING, Native.GUID_POWER_SAVING_STATUS })
         {
             var guid = setting;
             nint handle = Native.RegisterPowerSettingNotification(hwnd, ref guid, Native.DEVICE_NOTIFY_WINDOW_HANDLE);

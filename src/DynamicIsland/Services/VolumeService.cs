@@ -6,7 +6,8 @@ namespace DynamicIsland.Services;
 
 /// <summary>
 /// Reports master-volume / mute changes of the default playback device (volume keys, the tray
-/// flyout, apps...). Purely callback driven through Core Audio, so it costs nothing while idle.
+/// flyout, apps...) and switches of that device (e.g. Bluetooth earbuds connecting). Purely
+/// callback driven through Core Audio, so it costs nothing while idle.
 /// </summary>
 internal sealed class VolumeService : IDisposable
 {
@@ -15,6 +16,7 @@ internal sealed class VolumeService : IDisposable
     private readonly VolumeCallback _volumeCallback;
     private readonly DeviceCallback _deviceCallback;
     private IAudioEndpointVolume? _endpoint;
+    private string? _deviceId;
     private float _level = -1;
     private bool _muted;
 
@@ -25,11 +27,14 @@ internal sealed class VolumeService : IDisposable
         _deviceCallback = new DeviceCallback(this);
         _enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
         _enumerator.RegisterEndpointNotificationCallback(_deviceCallback);
-        BindDefaultDevice();
+        BindDefaultDevice(announce: false);
     }
 
     /// <summary>Raised on the UI thread with the new level (0..1) and mute state.</summary>
     public event Action<float, bool>? VolumeChanged;
+
+    /// <summary>Raised on the UI thread with the new output's name and whether it is worn (headphones / headset).</summary>
+    public event Action<string, bool>? DeviceChanged;
 
     public void Dispose()
     {
@@ -45,11 +50,14 @@ internal sealed class VolumeService : IDisposable
         }
     }
 
-    private void BindDefaultDevice()
+    private void BindDefaultDevice(bool announce)
     {
         ReleaseEndpoint();
         if (_enumerator.GetDefaultAudioEndpoint(CoreAudio.ERender, CoreAudio.EMultimedia, out var device) != 0 || device is null)
+        {
+            _deviceId = null;
             return; // no speakers / headphones right now
+        }
 
         try
         {
@@ -61,10 +69,50 @@ internal sealed class VolumeService : IDisposable
             endpoint.GetMute(out _muted);
             endpoint.RegisterControlChangeNotify(_volumeCallback);
             _endpoint = endpoint;
+
+            // Windows reports the switch once per role and sometimes repeats it; only announce real changes.
+            device.GetId(out var id);
+            bool changed = id != _deviceId;
+            _deviceId = id;
+            if (announce && changed && ReadDeviceInfo(device) is var (name, worn) && name.Length > 0)
+                DeviceChanged?.Invoke(name, worn);
         }
         finally
         {
             Marshal.ReleaseComObject(device);
+        }
+    }
+
+    /// <summary>"Headphones (Galaxy Buds2 Pro)" and whether it is a headphone-like form factor.</summary>
+    private static (string Name, bool Worn) ReadDeviceInfo(IMMDevice device)
+    {
+        if (device.OpenPropertyStore(CoreAudio.STGM_READ, out var store) != 0 || store is null) return ("", false);
+        try
+        {
+            string name = "";
+            var key = CoreAudio.PKEY_Device_FriendlyName;
+            if (store.GetValue(ref key, out var value) == 0)
+            {
+                if (value.VarType == CoreAudio.VT_LPWSTR) name = Marshal.PtrToStringUni(value.Value) ?? "";
+                CoreAudio.PropVariantClear(ref value);
+            }
+
+            bool worn = false;
+            key = CoreAudio.PKEY_AudioEndpoint_FormFactor;
+            if (store.GetValue(ref key, out value) == 0)
+            {
+                if (value.VarType == CoreAudio.VT_UI4)
+                {
+                    uint formFactor = (uint)(value.Value & 0xFFFFFFFF);
+                    worn = formFactor is CoreAudio.FormFactorHeadphones or CoreAudio.FormFactorHeadset or CoreAudio.FormFactorHandset;
+                }
+                CoreAudio.PropVariantClear(ref value);
+            }
+            return (name, worn);
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(store);
         }
     }
 
@@ -91,7 +139,7 @@ internal sealed class VolumeService : IDisposable
     {
         try
         {
-            BindDefaultDevice();
+            BindDefaultDevice(announce: true);
         }
         catch (Exception ex)
         {
