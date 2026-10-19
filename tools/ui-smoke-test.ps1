@@ -325,6 +325,28 @@ if ($track) {
     $track = [pscustomobject]@{ trackName = "Silent Night"; artistName = "Traditional"; albumName = ""; duration = 180 }
 }
 
+# Cover art for the fake track, so the ambient glow and the tinted equalizer show up too.
+$cover = Join-Path $files "cover.png"
+$art = New-Object System.Drawing.Bitmap 300, 300
+$graphics = [System.Drawing.Graphics]::FromImage($art)
+$graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+$night = New-Object System.Drawing.Drawing2D.LinearGradientBrush (New-Object System.Drawing.Rectangle 0, 0, 300, 300), ([System.Drawing.Color]::FromArgb(255, 12, 52, 66)), ([System.Drawing.Color]::FromArgb(255, 70, 34, 110)), 45
+$graphics.FillRectangle($night, 0, 0, 300, 300)
+$graphics.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(150, 40, 200, 220))), 30, 40, 170, 170)
+$graphics.FillEllipse((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(120, 230, 90, 200))), 140, 120, 140, 140)
+$graphics.FillEllipse([System.Drawing.Brushes]::White, 200, 50, 18, 18)
+$graphics.Dispose(); $art.Save($cover, [System.Drawing.Imaging.ImageFormat]::Png); $art.Dispose()
+
+# PowerShell 5.1 cannot await WinRT operations directly; bridge them to .NET tasks.
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+    $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+function Await-WinRt($operation, [Type]$resultType) {
+    $task = $asTask.MakeGenericMethod($resultType).Invoke($null, @($operation))
+    $task.Wait(-1) | Out-Null
+    $task.Result
+}
+
 $player = $null
 try {
     [void][Windows.Media.Playback.MediaPlayer, Windows.Media.Playback, ContentType = WindowsRuntime]
@@ -342,6 +364,14 @@ try {
     $updater.MusicProperties.Title = $track.trackName
     $updater.MusicProperties.Artist = $track.artistName
     $updater.MusicProperties.AlbumTitle = $track.albumName
+    try {
+        [void][Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+        [void][Windows.Storage.Streams.RandomAccessStreamReference, Windows.Storage.Streams, ContentType = WindowsRuntime]
+        $coverFile = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync($cover)) ([Windows.Storage.StorageFile])
+        $updater.Thumbnail = [Windows.Storage.Streams.RandomAccessStreamReference]::CreateFromFile($coverFile)
+    } catch {
+        Write-Host "Could not attach cover art: $_"
+    }
     $updater.Update()
     $timeline = [Windows.Media.SystemMediaTransportControlsTimelineProperties]::new()
     $timeline.StartTime = [TimeSpan]::Zero
@@ -363,6 +393,10 @@ Save-Shot "18-compact-lyrics"
 [SmokeInput]::SetCursorPos($centerX, $islandY) | Out-Null
 Start-Sleep -Milliseconds 1500
 Save-Shot "19-media-page"
+# Hover the progress bar (island top 8 + margin 18 + artwork 60 + gap 13 + half of the 16px strip): it grows and shows its knob.
+[SmokeInput]::SetCursorPos($centerX + 40, 107) | Out-Null
+Start-Sleep -Milliseconds 700
+Save-Shot "19b-media-hover"
 [SmokeInput]::Wheel(-120)   # next page: lyrics
 Start-Sleep -Milliseconds 1800
 Assert-Running

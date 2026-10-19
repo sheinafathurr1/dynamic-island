@@ -145,6 +145,8 @@ public partial class IslandWindow : Window
     private BitmapSource? _artSource;
     private Brush? _artBrush;
     private Color _accent;
+    private bool _scrubbing;
+    private double _scrubFraction;
 
     public IslandWindow()
     {
@@ -790,9 +792,31 @@ public partial class IslandWindow : Window
         if (swiped) e.Handled = true; // a swipe is not a click
         FinishDrag();
 
-        // A tap on a lyric line jumps the song to that line, like in Spotify.
-        if (!swiped && _pressTarget is FrameworkElement { Tag: LyricLine line } && _lyrics?.IsSynced == true && _media.HasTimeline)
-            _media.Seek(line.Time.TotalSeconds / _media.Duration.TotalSeconds);
+        if (swiped) return;
+        switch (TappedTag())
+        {
+            // A tap on a lyric line jumps the song to that line, like in Spotify.
+            case LyricLine line when _lyrics?.IsSynced == true && _media.HasTimeline:
+                _media.Seek(line.Time.TotalSeconds / _media.Duration.TotalSeconds);
+                break;
+            case "open-app":
+                OpenSourceApp();
+                break;
+            case "go-media":
+                GoToPage(Page.Media);
+                break;
+        }
+    }
+
+    /// <summary>The Tag of the tapped element or its nearest tagged parent inside the carousel.</summary>
+    private object? TappedTag()
+    {
+        for (var node = _pressTarget; node is not null && !ReferenceEquals(node, PageViewport);
+             node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node))
+        {
+            if (node is FrameworkElement { Tag: { } tag }) return tag;
+        }
+        return null;
     }
 
     private void PageViewport_LostMouseCapture(object sender, MouseEventArgs e)
@@ -861,6 +885,15 @@ public partial class IslandWindow : Window
             SetArtwork(CompactArt);
             SetArtwork(MediaArt);
             SetArtwork(TrackArt);
+            SetArtwork(LyricsArt);
+
+            // Ambient light from the artwork, cross-faded with each new cover.
+            var backdrop = _media.Backdrop is null ? null : Frozen(new ImageBrush(_media.Backdrop) { Stretch = Stretch.UniformToFill });
+            MediaGlow.Background = LyricsGlow.Background = backdrop;
+            var fadeIn = TimeSpan.FromMilliseconds(450);
+            MediaGlow.BeginAnimation(OpacityProperty, new DoubleAnimation(0, backdrop is null ? 0 : 0.6, fadeIn));
+            LyricsGlow.BeginAnimation(OpacityProperty, new DoubleAnimation(0, backdrop is null ? 0 : 0.4, fadeIn));
+            MediaArt.BeginAnimation(OpacityProperty, new DoubleAnimation(0.25, 1, TimeSpan.FromMilliseconds(350)) { EasingFunction = Ease });
         }
 
         if (_accent != _media.Accent)
@@ -868,6 +901,7 @@ public partial class IslandWindow : Window
             _accent = _media.Accent;
             var brush = Frozen(new SolidColorBrush(_accent));
             CompactEq.BarBrush = MediaEq.BarBrush = TrackEq.BarBrush = brush;
+            MediaArtGlow.Color = _artSource is null ? Colors.Black : _accent; // the cover glows in its own colour
         }
         CompactEq.IsPlaying = MediaEq.IsPlaying = TrackEq.IsPlaying = _media.IsPlaying;
 
@@ -880,6 +914,10 @@ public partial class IslandWindow : Window
         NextButton.IsEnabled = _media.CanGoNext;
         MediaTimeline.Visibility = _media.HasTimeline ? Visibility.Visible : Visibility.Collapsed;
         MediaPage.Height = PageHeight(Page.Media);
+
+        LyricsButton.Visibility = _settings.ShowLyrics ? Visibility.Visible : Visibility.Collapsed;
+        OpenAppButton.Visibility = _media.SourceAppId.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        OpenAppButton.ToolTip = _media.SourceAppName.Length > 0 ? $"Buka {_media.SourceAppName}" : "Buka pemutar";
     }
 
     private void FillTrackPanel()
@@ -898,7 +936,7 @@ public partial class IslandWindow : Window
 
     private void UpdateTimeline()
     {
-        if (!_media.HasTimeline) return;
+        if (!_media.HasTimeline || _scrubbing) return; // while scrubbing the bar follows the pointer
 
         var duration = _media.Duration;
         var position = _media.Position;
@@ -911,13 +949,109 @@ public partial class IslandWindow : Window
 
     private void Next_Click(object sender, RoutedEventArgs e) => _media.Next();
 
-    private void PlayPause_Click(object sender, RoutedEventArgs e) => _media.TogglePlayPause();
+    private void PlayPause_Click(object sender, RoutedEventArgs e)
+    {
+        _media.TogglePlayPause();
+
+        // A small springy "pop" on the icon as it swaps.
+        var pop = new DoubleAnimation(0.72, 1, TimeSpan.FromMilliseconds(380)) { EasingFunction = new BackEase { Amplitude = 0.6, EasingMode = EasingMode.EaseOut } };
+        PlayPauseScale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+        PlayPauseScale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+    }
+
+    private void LyricsButton_Click(object sender, RoutedEventArgs e) => GoToPage(Page.Lyrics);
+
+    private void OpenAppButton_Click(object sender, RoutedEventArgs e) => OpenSourceApp();
+
+    /// <summary>Brings the player (Spotify, a browser...) to the front, or starts it.</summary>
+    private void OpenSourceApp()
+    {
+        string id = _media.SourceAppId;
+        if (id.Length == 0) return;
+        try
+        {
+            // Store apps: their app id launches / activates them directly.
+            if (id.Contains('!'))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"shell:AppsFolder\\{id}") { UseShellExecute = true });
+                return;
+            }
+
+            // Desktop apps ("Spotify.exe", "Chrome"): find their window and bring it forward.
+            string name = System.IO.Path.GetFileNameWithoutExtension(id);
+            foreach (var process in Process.GetProcessesByName(name))
+            {
+                nint window = process.MainWindowHandle;
+                process.Dispose();
+                if (window == 0) continue;
+                Native.ShowWindow(window, Native.IsIconic(window) ? Native.SW_RESTORE : Native.SW_SHOW);
+                Native.SetForegroundWindow(window);
+                return;
+            }
+
+            // Hidden in the tray: starting it again makes single-instance players show themselves.
+            Process.Start(new ProcessStartInfo(name + ".exe") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex);
+        }
+    }
+
+    // Progress bar: grows and shows a knob on hover; press and drag to scrub, release to seek.
+    private void MediaTrack_MouseEnter(object sender, MouseEventArgs e) => SetTrackHover(true);
+
+    private void MediaTrack_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (!_scrubbing) SetTrackHover(false);
+    }
+
+    private void SetTrackHover(bool hover)
+    {
+        var duration = TimeSpan.FromMilliseconds(160);
+        MediaBar.BeginAnimation(HeightProperty, new DoubleAnimation(hover ? 8 : 5, duration) { EasingFunction = Ease });
+        MediaKnob.BeginAnimation(OpacityProperty, new DoubleAnimation(hover ? 1 : 0, duration));
+    }
 
     private void MediaTrack_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         e.Handled = true;
-        if (MediaTrack.ActualWidth <= 0) return;
-        _media.Seek(e.GetPosition(MediaTrack).X / MediaTrack.ActualWidth);
+        if (!_media.HasTimeline || MediaTrack.ActualWidth <= 0) return;
+        _scrubbing = true;
+        MediaTrack.CaptureMouse();
+        ScrubTo(e.GetPosition(MediaTrack).X);
+    }
+
+    private void MediaTrack_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (_scrubbing) ScrubTo(e.GetPosition(MediaTrack).X);
+    }
+
+    private void MediaTrack_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_scrubbing) return;
+        e.Handled = true;
+        _scrubbing = false;
+        MediaTrack.ReleaseMouseCapture();
+        _media.Seek(_scrubFraction);
+        if (!MediaTrack.IsMouseOver) SetTrackHover(false);
+    }
+
+    private void MediaTrack_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (!_scrubbing) return;
+        _scrubbing = false; // e.g. the island collapsed mid-drag: keep the song where it was
+        UpdateTimeline();
+    }
+
+    private void ScrubTo(double x)
+    {
+        _scrubFraction = Math.Clamp(x / MediaTrack.ActualWidth, 0, 1);
+        var duration = _media.Duration;
+        var position = duration * _scrubFraction;
+        SetProgress(MediaProgressDone, MediaProgressRest, _scrubFraction);
+        MediaElapsed.Text = FormatTime(position);
+        MediaRemaining.Text = "-" + FormatTime(duration - position);
     }
 
     // ───────────────────────────── lyrics ─────────────────────────────
@@ -971,7 +1105,9 @@ public partial class IslandWindow : Window
     private void SetLyricsStatus(LyricsStatus status)
     {
         _lyricsStatus = status;
-        LyricsHeader.Text = _media.Title.Length > 0 ? $"Lirik · {_media.Title}" : "Lirik";
+        LyricsHeader.Text = _media.Title.Length > 0 ? _media.Title : "Lirik";
+        LyricsArtist.Text = _media.Artist;
+        LyricsButton.Opacity = status == LyricsStatus.Ready ? 1 : 0.4; // dim when there is nothing to show
         LyricsSource.Text = status == LyricsStatus.Ready ? (_lyrics!.IsSynced ? "LRCLIB" : "LRCLIB · tanpa sinkron") : "";
         LyricsMessage.Text = status switch
         {

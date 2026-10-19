@@ -38,6 +38,15 @@ internal sealed class MediaService : IDisposable
     public string Artist { get; private set; } = "";
     public string Album { get; private set; } = "";
     public BitmapSource? Art { get; private set; }
+
+    /// <summary>The artwork shrunk to a few pixels: stretched out, it becomes a soft ambient glow.</summary>
+    public BitmapSource? Backdrop { get; private set; }
+
+    /// <summary>The player's app id, e.g. "Spotify.exe" or "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify".</summary>
+    public string SourceAppId { get; private set; } = "";
+
+    /// <summary>Readable player name for buttons and tooltips ("Spotify", "Chrome"...); empty when unknown.</summary>
+    public string SourceAppName { get; private set; } = "";
     public Color Accent { get; private set; } = DefaultAccent;
     public bool IsPlaying { get; private set; }
     public bool CanGoNext { get; private set; }
@@ -228,7 +237,7 @@ internal sealed class MediaService : IDisposable
             }
         }
 
-        var (art, accent) = await LoadArtAsync(properties?.Thumbnail);
+        var (art, backdrop, accent) = await LoadArtAsync(properties?.Thumbnail);
         if (version != _propertiesVersion) return; // a newer refresh superseded this one
 
         string title = properties?.Title?.Trim() ?? "";
@@ -240,13 +249,17 @@ internal sealed class MediaService : IDisposable
         if (art is null && !trackChanged)
         {
             art = Art;
+            backdrop = Backdrop;
             accent = Accent;
         }
 
         Title = title;
         Artist = artist;
         Album = properties?.AlbumTitle?.Trim() ?? "";
+        SourceAppId = session?.SourceAppUserModelId ?? "";
+        SourceAppName = AppName(session);
         Art = art;
+        Backdrop = backdrop;
         Accent = accent;
         Changed?.Invoke();
 
@@ -302,9 +315,9 @@ internal sealed class MediaService : IDisposable
         _positionUpdated = DateTimeOffset.Now;
     }
 
-    private static async Task<(BitmapSource? Art, Color Accent)> LoadArtAsync(IRandomAccessStreamReference? thumbnail)
+    private static async Task<(BitmapSource? Art, BitmapSource? Backdrop, Color Accent)> LoadArtAsync(IRandomAccessStreamReference? thumbnail)
     {
-        if (thumbnail is null) return (null, DefaultAccent);
+        if (thumbnail is null) return (null, null, DefaultAccent);
         try
         {
             byte[] bytes;
@@ -320,13 +333,13 @@ internal sealed class MediaService : IDisposable
             return await Task.Run(() =>
             {
                 var art = Decode(bytes, 160);
-                var accent = ArtPalette.Accent(Decode(bytes, 12));
-                return ((BitmapSource?)art, accent);
+                var tiny = Decode(bytes, 12);
+                return ((BitmapSource?)art, (BitmapSource?)tiny, ArtPalette.Accent(tiny));
             });
         }
         catch (Exception)
         {
-            return (null, DefaultAccent);
+            return (null, null, DefaultAccent);
         }
     }
 

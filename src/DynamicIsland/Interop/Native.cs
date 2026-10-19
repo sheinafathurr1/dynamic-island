@@ -112,6 +112,21 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
 
+    public const int SW_SHOW = 5;
+    public const int SW_RESTORE = 9;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindow(nint hWnd, int command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(nint hWnd);
+
     [DllImport("user32.dll")]
     public static extern nint GetShellWindow();
 
