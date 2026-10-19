@@ -13,11 +13,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms, UIAutomationClient, UIAutomationTypes
-Add-Type @"
+Add-Type -ReferencedAssemblies System.Drawing @"
 using System;
+using System.Drawing;
 using System.Runtime.InteropServices;
 public static class SmokeInput
 {
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+    [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dest, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(int action, int param, string value, int flags);
@@ -26,6 +31,21 @@ public static class SmokeInput
 
     public static void LeftClick(int x, int y)  { SetCursorPos(x, y); mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
     public static void RightClick(int x, int y) { SetCursorPos(x, y); mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero); }
+
+    // SRCCOPY | CAPTUREBLT: CAPTUREBLT is required to include layered (transparent) windows such as the island.
+    public static Bitmap Capture(int x, int y, int width, int height)
+    {
+        var bitmap = new Bitmap(width, height);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            IntPtr dest = graphics.GetHdc();
+            IntPtr screen = GetDC(IntPtr.Zero);
+            BitBlt(dest, 0, 0, width, height, screen, x, y, 0x00CC0020 | 0x40000000);
+            ReleaseDC(IntPtr.Zero, screen);
+            graphics.ReleaseHdc(dest);
+        }
+        return bitmap;
+    }
 }
 "@
 
@@ -42,14 +62,9 @@ Write-Host "Screen: $($screen.Width)x$($screen.Height)"
 
 function Save-Shot([string]$Name, [int]$Width = 520, [int]$Height = 220) {
     $x = [int]($screen.Left + ($screen.Width - $Width) / 2)
-    $bitmap = New-Object System.Drawing.Bitmap $Width, $Height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    # CaptureBlt is required to include layered (transparent) windows such as the island.
-    $operation = [System.Drawing.CopyPixelOperation]::SourceCopy -bor [System.Drawing.CopyPixelOperation]::CaptureBlt
-    $graphics.CopyFromScreen($x, $screen.Top, 0, 0, $bitmap.Size, $operation)
+    $bitmap = [SmokeInput]::Capture($x, $screen.Top, $Width, $Height)
     $path = Join-Path $OutDir "$Name.png"
     $bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-    $graphics.Dispose()
     $bitmap.Dispose()
     Write-Host "Saved $path"
 
