@@ -5,7 +5,7 @@ supaya **ringan**: tidak ada Electron atau browser tersembunyi, hampir semuanya 
 Windows, dan tidak ada render saat island diam.
 
 <p align="center">
-  <img src="docs/preview.png" alt="Tangkapan layar Dynamic Island di Windows: idle, timer, jam, alarm, gaya notch, dan menu klik kanan" width="520">
+  <img src="docs/preview.png" alt="Tangkapan layar Dynamic Island di Windows: idle, musik dan lirik, panggilan, notifikasi, screenshot, unduhan, cuaca dan agenda, kontrol, sistem, timer, titipan, pengaturan, dan menu klik kanan" width="760">
 </p>
 
 <sub>Tangkapan layar asli dari tes UI otomatis di GitHub Actions (Windows). Musiknya sesi media
