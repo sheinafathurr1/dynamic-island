@@ -13,6 +13,17 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 
 ## Fitur
 
+- **Cahaya suasana**: di dalam island ada cahaya lembut yang warnanya mengikuti apa yang sedang
+  tampil. Halaman Hari ini menjadi "langit" kecil: oranye-pink saat fajar, biru saat siang,
+  oranye saat senja, ungu-indigo di malam hari, dan biru keabuan saat hujan. Timer oranye (merah di
+  10 detik terakhir, dan berdenyut saat waktu habis), panggilan hijau (merah saat dibisukan),
+  pesan memakai warna aplikasinya (WhatsApp hijau, Discord ungu), musik memakai warna cover. Titik
+  halaman yang aktif ikut berwarna. Cahayanya hanya di dalam bentuk island, jadi tidak menghalangi
+  klik di sekitarnya.
+- **Tepi kaca & cahaya kursor**: garis tipis berkilau di tepi island membuatnya terlihat seperti
+  kaca hitam, bukan potongan hitam datar; saat island terbuka, cahaya samar mengikuti kursor.
+- **Sapaan**: saat island mulai, muncul "Selamat pagi/siang/sore/malam" dengan tanggal dan ikon
+  matahari atau bulan.
 - **Carousel**: island yang terbuka berisi halaman-halaman yang bisa digeser, dengan titik
   pagination ala iOS: 📞 **Panggilan** (saat mikrofon dipakai) → 🎵 **Musik** → 🎤 **Lirik** (kalau ada
   media) → ⏱ **Timer** → 📅 **Hari ini** → 🎛 **Kontrol** → 📊 **Sistem** → 📥 **Titipan** (kalau ada file). Geser dengan **scroll**, swipe dua jari ke samping di touchpad,
@@ -94,8 +105,8 @@ buatan tes dengan lagu domain publik, notifikasinya toast sungguhan, dan agendan
 - Tidak mencuri fokus saat diklik dan tidak muncul di taskbar maupun Alt+Tab.
 
 Klik kanan island untuk menu singkat: **Timer**, **Kalender**, **Pengaturan…**, dan keluar.
-Jendela **Pengaturan** berisi semua opsi dalam bentuk saklar: gaya island/notch, garis tipis saat
-diam, jangan tutupi jendela, halaman Kontrol/Sistem, cuaca dan kotanya, lirik dan equalizer, semua
+Jendela **Pengaturan** berisi semua opsi dalam bentuk saklar: gaya island/notch, cahaya suasana,
+sapaan, garis tipis saat diam, jangan tutupi jendela, halaman Kontrol/Sistem, cuaca dan kotanya, lirik dan equalizer, semua
 jenis notifikasi (aplikasi, screenshot, unduhan, panggilan, lagu, volume, perangkat audio), link
 kalender, dan jalankan saat Windows mulai. Perubahan langsung berlaku.
 
@@ -121,6 +132,7 @@ kalender, dan jalankan saat Windows mulai. Perubahan langsung berlaku.
 | Screenshot & unduhan | Notifikasi clipboard dan perubahan folder dari Windows, tanpa polling |
 | Pil panggilan | Notifikasi registry privasi yang sama dengan indikator mikrofon; jam durasi hanya jalan selama terlihat |
 | Sistem | Dibaca sekali per detik hanya selama halaman Sistem terbuka |
+| Cahaya suasana | Dua gradien statis; warnanya hanya dianimasikan (setengah detik) saat halaman atau aktivitas berganti |
 
 Saat idle aplikasi tidak menjalankan timer dan tidak merender apa pun. Pemakaian RAM-nya setara
 aplikasi WPF kecil pada umumnya (jauh di bawah aplikasi berbasis Electron).
@@ -212,7 +224,8 @@ tools/ui-smoke-test.ps1     Tes UI otomatis di CI (menjalankan app, klik-klik, a
 - **Ukuran tiap mode**: `SizeOf()` di `IslandWindow.xaml.cs`.
 - **Rasa animasi**: `response` dan `damping` di `IslandAnimator.AnimateTo()`. Damping lebih kecil
   berarti pantulan lebih banyak.
-- **Warna & ikon**: `Theme.xaml`.
+- **Warna & ikon**: `Theme.xaml`; warna cahaya suasana per halaman di `CurrentMood()` dan
+  `SkyMood()`.
 - **Lama notifikasi**: argumen `TimeSpan` pada setiap pemanggilan `ShowActivity(...)`.
 
 ## Batasan
