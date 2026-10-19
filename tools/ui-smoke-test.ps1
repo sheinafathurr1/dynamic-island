@@ -245,12 +245,22 @@ $mover = Start-Job -ArgumentList $helperSource, $centerX, $OutDir -ScriptBlock {
     $shot.Dispose()
     [SmokeInput]::LeftUp()
 }
+# Injected input is asynchronous: wait until Windows really sees the button held, or OLE ends the
+# drag on its very first check.
 [SmokeInput]::LeftDown(130, 620)
+$deadline = (Get-Date).AddSeconds(3)
+while ([System.Windows.Forms.Control]::MouseButtons -ne [System.Windows.Forms.MouseButtons]::Left -and (Get-Date) -lt $deadline) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 20
+}
+Write-Host "Button held before drag: $([System.Windows.Forms.Control]::MouseButtons)"
+$dragWatch = [System.Diagnostics.Stopwatch]::StartNew()
 $effect = $form.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]::Copy -bor [System.Windows.Forms.DragDropEffects]::Link)
+$dragWatch.Stop()
 Receive-Job $mover -Wait | Out-Host
 Remove-Job $mover
 $form.Close()
-Write-Host "Drop effect: $effect"
+Write-Host "Drop effect: $effect after $([int]$dragWatch.Elapsed.TotalMilliseconds) ms"
 Emit-Shot "10-drop-zone"
 
 Start-Sleep -Milliseconds 900
