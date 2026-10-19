@@ -51,9 +51,11 @@ public static class SmokeInput
 
 [SmokeInput]::SetProcessDPIAware() | Out-Null
 
-# Plain grey desktop: makes the black island easy to judge and keeps screenshots small.
+# Plain grey, empty desktop: makes the black island easy to judge and keeps screenshots small.
 [SmokeInput]::SystemParametersInfo(0x0014, 0, "", 3) | Out-Null   # SPI_SETDESKWALLPAPER: none
 [SmokeInput]::SetSysColors(1, @(1), @(0x00707070)) | Out-Null       # COLOR_DESKTOP
+(New-Object -ComObject Shell.Application).MinimizeAll()
+Start-Sleep -Seconds 1
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
